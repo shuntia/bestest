@@ -1,23 +1,29 @@
-use crate::checker::check_dir;
-use crate::config::*;
 use env_logger;
+use log::LevelFilter;
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
-use std::{any::Any, collections::HashSet, fs::File, io::Write, path::PathBuf, process::exit};
+use std::{collections::HashSet, fs::File, io::Write, path::PathBuf, process::exit};
 use walkdir::WalkDir;
 pub mod checker;
 pub mod config;
 pub mod executable;
 pub mod lang;
 pub mod test;
+use checker::check_dir;
+use config::*;
 
 #[tokio::main]
 async fn main() {
     //argument checking
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
     let args = &config::ARGS;
+    env_logger::builder()
+        .filter_level(match args {
+            _ if args.debug => LevelFilter::Debug,
+            _ if args.verbose => LevelFilter::Info,
+            _ if args.quiet => LevelFilter::Off,
+            _ => LevelFilter::Warn,
+        })
+        .init();
     match &args.command {
         Command::Init {} => {
             info!("creating bare config file...");
