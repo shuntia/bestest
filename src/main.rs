@@ -9,23 +9,26 @@ pub mod config;
 pub mod executable;
 pub mod lang;
 pub mod test;
+pub mod unpacker;
 use checker::check_dir;
 use config::*;
 
 #[tokio::main]
 async fn main() {
-    //argument checking
-    let args = &config::ARGS;
+    //collect args
+    let args = &config::SIMPLEOPTS;
+    //log setup
     env_logger::builder()
         .filter_level(match args {
             _ if args.debug => LevelFilter::Debug,
             _ if args.verbose => LevelFilter::Info,
-            _ if args.quiet => LevelFilter::Off,
-            _ => LevelFilter::Warn,
+            _ if args.quiet => LevelFilter::Error,
+            _ if args.silent => LevelFilter::Off,
+            _ => LevelFilter::Info,
         })
         .init();
-    match &args.command {
-        Command::Init {} => {
+    match &args.mode {
+        CommandType::Init => {
             info!("creating bare config file...");
             let mut f = File::create("config.toml").unwrap();
             let buf = toml::to_string_pretty(&Config::default()).unwrap();
@@ -34,10 +37,10 @@ async fn main() {
         }
         _ => {}
     }
-    argmsg(args);
+    info!("Welcome to the APCS Homework tester!");
     let config = &CONFIG;
-    info!("Config:\n{}", (*config).clone());
-    info!("Starting safety checks...");
+    debug!("Config:\n{}", (*config).clone());
+    debug!("Starting safety checks...");
     let check_result = check_dir(config.target.clone().into()).await.unwrap();
     if check_result.is_empty() {
         info!("All checks passed.");
@@ -58,65 +61,7 @@ async fn main() {
     for i in check_result {
         exec.remove(&i.0);
     }
-}
-
-fn argmsg(args: &Args) {
-    if args.test != None {
-        println!("Test mode is enabled. Ignoring rest of arguments.");
-        return;
-    }
-    if args.verbose {
-        log::set_max_level(log::LevelFilter::Debug);
-        info!("Verbose mode enabled");
-    }
-    if args.debug {
-        log::set_max_level(log::LevelFilter::Trace);
-        debug!("Debug mode enabled");
-    }
-    if args.config == None {
-        error!("No configuration file specified! The program will attempt to find one inside the target directory.");
-    }
-    if args.input == None {
-        error!("No input file or directory specified");
-        if args.config == None {
-            panic!("No input directory nor config file! Tester does not know what to do!");
-        }
-    } else if args.input.clone().unwrap().is_file() {
-        if args.config == None {
-            panic!("Cannot probe config file with only one provided file.");
-        }
-    }
-    if args.output == None {
-        info!("No output file or directory specified. falling back to stdout.");
-    } else {
-        let tmp = args.output.clone().unwrap();
-        if tmp.is_dir() {
-            unimplemented!("Output is a directory! Not supported yet.");
-        } else {
-            info!("Output file: {}", tmp.display());
-            match tmp
-                .extension()
-                .expect("Expected file format!")
-                .to_str()
-                .unwrap()
-            {
-                "json" => {
-                    info!("Output format: JSON");
-                }
-                "txt" => {
-                    info!("Output format: Plaintext");
-                }
-                _ => {
-                    error!(
-                        "Unsupported output format: {}",
-                        tmp.extension()
-                            .expect("Expected file format!")
-                            .to_str()
-                            .unwrap()
-                    );
-                    info!("falling back to stdout.");
-                }
-            }
-        }
-    }
+    let res = test::test_dirs(exec);
+    info!("{:?}", res.await);
+    println!("Done!")
 }

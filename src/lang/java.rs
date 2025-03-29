@@ -102,7 +102,7 @@ impl Runner for JavaRunner {
             None => return Err("Process is not running!".into()),
         };
         let mut buf: String = String::new();
-        stdout.read_to_string(&mut buf);
+        let _ = stdout.read_to_string(&mut buf);
         Ok(buf)
     }
     fn new(p: PathBuf) -> Result<JavaRunner, Error> {
@@ -158,7 +158,7 @@ impl Runner for JavaRunner {
         }
     }
     fn run(&mut self) -> Result<(), Error> {
-        self.command.exec();
+        let _ = self.command.exec();
         self.process = Some(self.command.spawn().unwrap());
         Ok(())
     }
