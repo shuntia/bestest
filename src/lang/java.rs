@@ -24,32 +24,8 @@ pub struct JavaRunner {
 }
 
 impl JavaRunner {
-    /// creates venv for execution preparation
-    pub fn make_venv(&mut self) -> Result<(), String> {
-        if self.venv.is_some() {
-            return Err("venv already exists!".into());
-        }
-        let venvdir = self
-            .entry
-            .parent()
-            .unwrap()
-            .to_path_buf()
-            .join(self.entry.file_stem().unwrap());
-        self.venv = Some(venvdir.clone());
-        std::fs::create_dir(venvdir.clone()).map_err(|e| format!("{}", e).to_owned())?;
-        let mut tmpfn = venvdir.clone();
-        tmpfn.push(PathBuf::from(self.entry.file_name().unwrap()));
-        std::fs::rename(self.entry.clone(), tmpfn).map_err(|e| format!("{}", e).to_owned())?;
-        for i in self.deps.clone() {
-            let mut target = venvdir.clone();
-            target.push(PathBuf::from(i.file_name().unwrap()));
-            copy(i, target).map_err(|e| format!("{}", e).to_owned())?;
-        }
-        Ok(())
-    }
     /// appends dependencies for execution. automatically creates a venv.
     pub fn add_dep(&mut self, p: PathBuf) -> Result<(), String> {
-        self.make_venv().map_err(|e| format!("{}", e).to_owned())?;
         self.deps.push(p.clone());
         let mut target = self.venv.clone().unwrap();
         target.push(PathBuf::from(p.file_name().unwrap()));
@@ -58,7 +34,6 @@ impl JavaRunner {
     }
     /// appends dependencies for execution. automatically creates a venv.
     pub fn append_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String> {
-        self.make_venv().map_err(|e| format!("{}", e).to_owned())?;
         self.deps.extend(p.clone());
         let venvdir = self.venv.clone();
         std::fs::create_dir(venvdir.clone().unwrap()).map_err(|e| format!("{}", e).to_owned())?;

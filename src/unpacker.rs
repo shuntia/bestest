@@ -1,47 +1,45 @@
-use crate::config::{generate_regex, CONFIG, TEMPDIR};
-use nix::libc::{mkdir, mode_t};
+use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, SIMPLEOPTS, TEMPDIR};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use log::{debug, error, info, warn};
+use std::error::Error;
 use std::fs::{self, File};
 use std::path::Path;
+use std::sync::Arc;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
-use tokio::fs::{create_dir, rename};
+use tokio::fs::{copy, create_dir};
+use tokio::sync::Semaphore;
 use zip::read::ZipArchive;
+use zip::result::ZipError;
 
-use log::{error, info, warn};
-use zip::result::ZipResult;
-
+#[derive(Debug, Clone)]
 pub enum UnpackError {
     FileFormat,
     Executable,
     FileType,
-    ZipProblem(ZipResult<()>),
+    ZipProblem(String),
+    Os(i32),
+    Ignore,
     Unknown,
 }
-impl From<ZipResult<()>> for UnpackError {
-    fn from(value: ZipResult<()>) -> Self {
-        Self::ZipProblem(value)
-    }
-}
-fn unzip_to_dir<T: AsRef<Path> + Clone>(zip_path: T, dest_dir: T) -> zip::result::ZipResult<()> {
-    // Open the ZIP file
+async fn unzip_to_dir<T: AsRef<Path> + Clone>(
+    zip_path: T,
+    dest_dir: T,
+) -> zip::result::ZipResult<()> {
     let zip_file = File::open(zip_path)?;
     let mut archive = ZipArchive::new(zip_file)?;
 
-    // Create the destination directory if it doesn't exist
     if !dest_dir.as_ref().exists() {
         fs::create_dir_all(dest_dir.clone())?;
     }
 
-    // Iterate over each file in the archive
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let file_name = file.name().to_string();
         let dest_path = dest_dir.as_ref().join(file_name);
 
-        // Create the destination file (if it's a directory, just create it)
         if file.name().ends_with('/') {
             fs::create_dir_all(&dest_path)?;
         } else {
-            // Create a file and copy the content from the ZIP
             let mut out_file = File::create(dest_path)?;
             std::io::copy(&mut file, &mut out_file)?;
         }
@@ -50,9 +48,79 @@ fn unzip_to_dir<T: AsRef<Path> + Clone>(zip_path: T, dest_dir: T) -> zip::result
     Ok(())
 }
 
-pub fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
+pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
+    let semaphore = Arc::new(Semaphore::new(CONFIG.threads as usize));
+    let mut handles = vec![];
+    if p.is_file() {
+        error!("Expected path, instead got file! Unpacking single file anyway...");
+        return vec![unpack(p).await];
+    }
+    info!("unpacking...");
+    let mp = MULTIPROG.lock().unwrap();
+    let op = mp.add(ProgressBar::new(p.read_dir().unwrap().count() as u64));
+
+    for entry in p.read_dir().unwrap() {
+        let prog = mp.add(ProgressBar::new_spinner());
+        prog.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner} Unpacking {msg}")
+                .unwrap(),
+        );
+        handles.push(tokio::task::spawn(unpack_semaphore_prog(
+            entry.unwrap().path(),
+            semaphore.clone(),
+            prog,
+            op.clone(),
+        )));
+    }
+    let mut ret = vec![];
+    for i in handles {
+        ret.push(i.await.unwrap());
+        match ret.get(ret.len() - 1).unwrap() {
+            Ok(p) => {
+                info!(
+                    "Successfully unpacked {}",
+                    p.file_name().unwrap().to_str().unwrap()
+                )
+            }
+            Err(e) => match e {
+                UnpackError::Ignore => {}
+                err => error!("Failed to unpack: {:?}", err),
+            },
+        }
+        op.inc(1);
+    }
+    op.finish_with_message("All checks complete.");
+    ret
+}
+
+async fn unpack_semaphore_prog(
+    p: PathBuf,
+    s: Arc<Semaphore>,
+    pr: ProgressBar,
+    op: ProgressBar,
+) -> Result<PathBuf, UnpackError> {
+    let ret = unpack_semaphore(p.clone(), s).await;
+    op.inc(1);
+    pr.finish_and_clear();
+    debug!("Completed {}", p.to_str().unwrap());
+    ret
+}
+
+async fn unpack_semaphore(p: PathBuf, s: Arc<Semaphore>) -> Result<PathBuf, UnpackError> {
+    let sp = s.acquire().await.unwrap();
+    let ret = unpack(p).await;
+    drop(sp);
+    return ret;
+}
+
+pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     if p.is_dir() {
         warn!("Unpacker does not know what to do with unpacked directory! Leaving it untouched!");
+    }
+    if p.is_file() && !KNOWN_EXTENSIONS.contains(&p.extension().unwrap().to_str().unwrap()) {
+        debug!("Ignoring unknown file.");
+        return Err(UnpackError::Ignore);
     }
     let r = generate_regex(&CONFIG.format);
     let name;
@@ -97,13 +165,40 @@ pub fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         };
         let mut target = TEMPDIR.clone();
         target.push(name.as_str());
-        create_dir(&target);
+        match create_dir(&target).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(UnpackError::Os(e.raw_os_error().unwrap()));
+            }
+        }
         if vec!["zip", "tar", "tar.gz"].contains(&ext) {
-            unzip_to_dir(p, target.clone());
+            match unzip_to_dir(p, target.clone()).await {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(UnpackError::ZipProblem(e.to_string()));
+                }
+            }
         } else {
-            rename(p.clone(), target.join(p.file_name().unwrap()));
+            match copy(
+                p.clone(),
+                target.join(
+                    match caps.name("filename") {
+                        Some(s) => s.as_str(),
+                        None => name.as_str(),
+                    }
+                    .to_owned()
+                        + "."
+                        + p.extension().unwrap().to_str().unwrap(),
+                ),
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => return Err(UnpackError::Os(e.raw_os_error().unwrap_or(-1))),
+            }
         }
         return Ok(target);
     }
-    Err(UnpackError::Unknown)
+    error!("Regex capture failed! File name format or config may be faulty.");
+    Err(UnpackError::FileFormat)
 }

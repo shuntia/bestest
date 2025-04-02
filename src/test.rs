@@ -1,9 +1,12 @@
+use console::style;
 use imara_diff::{diff, intern::InternedInput, Algorithm};
+use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
 use log::{debug, error, info};
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
 use tokio::sync::Semaphore;
 
+use crate::config::MULTIPROG;
 use crate::{
     config::{self, CONFIG},
     executable::Executable,
@@ -101,18 +104,35 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
     let max_threads = config::get_config().unwrap().threads;
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
     let mut handles = vec![];
-    for i in p {
+    let mp = MULTIPROG.lock().unwrap();
+    if mp.clear().is_err() {
+        error!("failed to clear multiprog instance!");
+    }
+    let mut it = p.into_iter();
+    let mut v = vec![];
+    let op = mp.add(ProgressBar::new(it.by_ref().count() as u64));
+    for i in it {
+        v.push(i.clone());
         handles.push(tokio::task::spawn(test_file_semaphore(
-            i.clone(),
+            i,
             semaphore.clone(),
         )));
     }
+    debug!("Processing: {:#?}", v);
     let mut ret = vec![];
-    let mut ctr = 0;
+    let mut acc = 0;
     for i in handles {
         ret.push(i.await.unwrap());
-        ctr += 1;
-        debug!("finished async test {}.", ctr);
+        match ret.get(acc).unwrap() {
+            Ok(o) => info!(
+                "Completed {} with result: {:?}",
+                v.get(acc).unwrap().file_name().unwrap().to_str().unwrap(),
+                o
+            ),
+            Err(e) => info!("Program errored out: {}", e),
+        }
+        acc += 1;
+        op.inc(1);
     }
     return ret;
 }
@@ -127,7 +147,41 @@ pub async fn test_file_semaphore(
     ret
 }
 
+async fn test_file_semaphore_prog(
+    path: PathBuf,
+    semaphore: Arc<Semaphore>,
+) -> Result<Vec<TestResult<usize>>, String> {
+    let mut mp = MULTIPROG.lock().unwrap();
+    let prog = mp.add(ProgressBar::new_spinner());
+    prog.clone()
+        .with_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner} Testing {msg}")
+                .unwrap(),
+        )
+        .set_message(format!("{}", path.clone().to_str().unwrap()));
+    let ret = test_file_semaphore(path.clone(), semaphore).await;
+    prog.with_finish(ProgressFinish::WithMessage(
+        match &ret {
+            Ok(_) => format!(
+                "{} All test have passed for {}",
+                style("[AC] ").bold().green(),
+                path.to_str().unwrap()
+            ),
+            Err(e) => format!(
+                "{} Failed to run Program: {} due to {}",
+                style("[ERR]").bold().red(),
+                path.to_str().unwrap(),
+                e
+            ),
+        }
+        .into(),
+    ));
+    ret
+}
+
 pub async fn test_file(path: PathBuf) -> Result<Vec<TestResult<usize>>, String> {
+    info!("testing {:?}", path);
     let timeout = config::get_config().unwrap().timeout;
     let mut exec = Executable::new(path.clone(), false);
     let mut proc;
@@ -148,9 +202,9 @@ pub async fn test_file(path: PathBuf) -> Result<Vec<TestResult<usize>>, String> 
         }
         while !proc.running() {
             if proc.runtime().unwrap() > Duration::new(timeout / 1000, (timeout % 1000) as u32) {
-                if proc.signal(nix::sys::signal::Signal::SIGKILL).is_err() {
-                    error!("Failed to kill process somehow. If you're seeing this, please report this to the developer through https://github.com/shuntia/apcs-tester/issues");
-                    error!("Errored config: {}", *CONFIG);
+                match proc.signal(nix::sys::signal::Signal::SIGKILL) {
+                    Err(e) => error!("failed to kill process: {}", e),
+                    Ok(()) => {}
                 }
                 info!("Waiting for kill...");
                 while !proc.running() {}
@@ -159,6 +213,7 @@ pub async fn test_file(path: PathBuf) -> Result<Vec<TestResult<usize>>, String> 
         }
         let out = proc.read_all()?;
         let input = InternedInput::new(expected_out.get(i).unwrap().as_str(), &out.as_str());
+        imara_diff::diff(Algorithm::Histogram, input)
     }
     Ok(result)
 }

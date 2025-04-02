@@ -15,6 +15,47 @@ pub enum Type {
     Static,
 }
 
+pub async fn check_dirs(
+    path: Vec<std::path::PathBuf>,
+) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
+    crate::config::get_config()?;
+    let results: Arc<Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let max_threads = config::get_config().unwrap().threads;
+    let semaphore = Arc::new(Semaphore::new(max_threads as usize));
+    let mut handles = vec![];
+    let errors = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
+    for i in path {
+        for entry in WalkDir::new(i).into_iter().filter(|el| {
+            config::KNOWN_EXTENSIONS.contains(
+                match &el.as_ref().unwrap().clone().path().extension() {
+                    Some(s) => s.to_str().unwrap(),
+                    None => "java",
+                },
+            )
+        }) {
+            let handle = task::spawn(changefile(
+                results.clone(),
+                semaphore.clone(),
+                entry.unwrap().into_path(),
+                errors.clone(),
+            ));
+            handles.push(handle);
+        }
+    }
+    let total_tasks = handles.len();
+    let prog = indicatif::ProgressBar::new(total_tasks as u64);
+    for h in handles {
+        h.await.unwrap();
+        prog.inc(1);
+    }
+    for e in errors.lock().await.clone() {
+        error!("{} at {:?}", e.1, e.0);
+    }
+    let ret = std::mem::take(&mut *results.lock().await);
+    Ok(ret)
+}
+
 pub async fn check_dir(
     path: std::path::PathBuf,
 ) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
@@ -30,7 +71,15 @@ pub async fn check_dir(
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
     let mut handles = vec![];
     let errors = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
-    for entry in WalkDir::new(path) {
+    for entry in WalkDir::new(path).into_iter().filter(|el| {
+        config::KNOWN_EXTENSIONS.contains(match &el.as_ref().unwrap().clone().path().extension() {
+            Some(s) => s.to_str().unwrap(),
+            None => {
+                warn!("failed to read extension! checking anyway.");
+                "java"
+            }
+        })
+    }) {
         let handle = task::spawn(changefile(
             results.clone(),
             semaphore.clone(),
@@ -48,7 +97,7 @@ pub async fn check_dir(
     let ret = std::mem::take(&mut *results.lock().await);
     Ok(ret)
 }
-pub async fn changefile(
+async fn changefile(
     results: Arc<Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>>,
     semaphore: Arc<Semaphore>,
     dir: PathBuf,

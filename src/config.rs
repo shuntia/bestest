@@ -1,16 +1,20 @@
 use crate::checker;
 use crate::executable::Language;
 use clap::*;
+use indicatif::MultiProgress;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::LazyCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::LazyLock;
+use std::str::FromStr;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{env, fs};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -31,7 +35,7 @@ fn load_config() -> Config {
             {
                 let mut string = String::new();
                 let _ = File::open(s).unwrap().read_to_string(&mut string);
-                toml::from_str(string.as_str()).expect("Illegal config! Failed to parse JSON!")
+                toml::from_str(string.as_str()).expect("Illegal config! Failed to parse TOML!")
             }
             _ => {
                 panic!("File extension not found! Config format guessing is not implemented yet!");
@@ -63,7 +67,7 @@ fn load_config() -> Config {
         allow: cp.allow.unwrap_or(vec![]),
         format: match &cp.format {
             Some(s) => s.into(),
-            None => "{name}_{num}_{num}.{ext}".into(),
+            None => "{name}_{num}_{id}.{ext}".into(),
         },
         orderby: cp.orderby.unwrap_or(Orderby::Id),
     };
@@ -85,6 +89,7 @@ pub fn generate_regex(format: &str) -> Regex {
         ("num", "(?P<num>\\d+)"),                    // Only numbers
         ("alnum", "(?P<alnum>[a-zA-Z0-9]+)"),        // Letters & numbers
         ("word", "(?P<word>\\w+)"),                  // Word (letters, numbers, underscore)
+        ("filename", "(?P<filename>\\w+)"),          // Word (letters, numbers, underscore)
         ("id", "(?P<id>\\d+)"),                      // Numeric ID
         ("extension", "(?P<extension>\\w+)"),        // File extension (word characters)
     ]);
@@ -117,7 +122,17 @@ pub fn match_ext(s: &str) -> Language {
     from(s.to_owned())
 }
 
-pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("/tmp/"));
+pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    let foldername = format!(
+        "/tmp/apcs-tester-tmp-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_nanos()
+    );
+    fs::create_dir(foldername.clone()).unwrap();
+    PathBuf::from(foldername)
+});
 
 pub static CONFIG: Lazy<Config> = Lazy::new(load_config);
 
@@ -168,7 +183,7 @@ impl Default for Config {
             entry: None,
             lang: Language::Guess,
             args: vec![],
-            target: PathBuf::new(),
+            target: env::current_dir().unwrap(),
             input: vec![],
             output: vec![],
             points: vec![],
@@ -199,7 +214,7 @@ impl Display for Config {
     }
 }
 
-#[derive(Parser, Clone)]
+#[derive(Debug, Parser, Clone)]
 pub struct Args {
     /// subcommands
     #[clap(subcommand)]
@@ -214,7 +229,7 @@ pub enum CommandType {
     Format,
 }
 
-#[derive(Subcommand, Clone)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum Command {
     /// initialize the tests
     Init {
@@ -236,6 +251,9 @@ pub enum Command {
         /// debug mode
         #[clap(long)]
         debug: bool,
+        /// trace mode
+        #[clap(long)]
+        trace: bool,
         /// quiet mode
         #[clap(short, long)]
         quiet: bool,
@@ -248,9 +266,6 @@ pub enum Command {
         /// configuration file for tests
         #[clap(long)]
         config: Option<PathBuf>,
-        /// input file or directory
-        #[clap(short, long)]
-        input: Option<PathBuf>,
         /// output file or directory for results
         #[clap(short, long)]
         output: Option<PathBuf>,
@@ -269,19 +284,7 @@ pub enum Command {
 impl Args {
     pub fn get_config(&self) -> Option<&PathBuf> {
         match &self.command {
-            Command::Run {
-                test,
-                verbose,
-                debug,
-                quiet,
-                silent,
-                log_level,
-                config,
-                input,
-                output,
-                dry_run,
-                artifacts,
-            } => config.as_ref(),
+            Command::Run { config, .. } => config.as_ref(),
             _ => None,
         }
     }
@@ -296,6 +299,8 @@ pub struct SimpleOpts {
     pub verbose: bool,
     /// debug mode
     pub debug: bool,
+    /// trace mode
+    pub trace: bool,
     /// quiet mode
     pub quiet: bool,
     /// silent mode
@@ -303,9 +308,7 @@ pub struct SimpleOpts {
     /// log level
     pub log_level: Option<u32>,
     /// configuration file for tests
-    pub config: Option<PathBuf>,
-    /// input file or directory
-    pub input: Option<PathBuf>,
+    pub config: PathBuf,
     /// output file or directory for results
     pub output: Option<PathBuf>,
     /// dry-run and just execute, don't input anything.
@@ -315,6 +318,7 @@ pub struct SimpleOpts {
 }
 impl SimpleOpts {
     pub fn new() -> Self {
+        debug!("converting ARGS into SimpleOpts: {:?}", ARGS);
         (*ARGS).clone().into()
     }
 }
@@ -326,11 +330,13 @@ impl Default for SimpleOpts {
             test: None,
             verbose: false,
             debug: false,
+            trace: false,
             quiet: false,
             silent: false,
             log_level: None,
-            config: None,
-            input: None,
+            config: env::current_dir()
+                .unwrap()
+                .join(PathBuf::from_str("tests.toml").unwrap()),
             output: None,
             dry_run: true,
             artifacts: false,
@@ -340,78 +346,7 @@ impl Default for SimpleOpts {
 
 impl From<Lazy<Args>> for SimpleOpts {
     fn from(value: Lazy<Args>) -> Self {
-        let mut ret = SimpleOpts::default();
-        match &value.command {
-            Command::Init { silent, quiet } => {
-                ret.quiet = quiet.clone();
-                ret.silent = silent.clone();
-            }
-            Command::Run {
-                test,
-                verbose,
-                debug,
-                quiet,
-                silent,
-                log_level,
-                config,
-                input,
-                output,
-                dry_run,
-                artifacts,
-            } => {
-                ret.test = test.clone();
-                ret.verbose = verbose.clone();
-                ret.debug = debug.clone();
-                ret.quiet = quiet.clone();
-                ret.silent = silent.clone();
-                ret.log_level = log_level.clone();
-                ret.config = config.clone();
-                ret.input = input.clone();
-                ret.output = output.clone();
-                ret.dry_run = dry_run.clone();
-                ret.artifacts = artifacts.clone();
-            }
-            _ => {}
-        }
-        return ret;
-    }
-}
-impl From<LazyCell<Args>> for SimpleOpts {
-    fn from(value: LazyCell<Args>) -> Self {
-        let mut ret = SimpleOpts::default();
-        match &value.command {
-            Command::Init { silent, quiet } => {
-                ret.quiet = quiet.clone();
-                ret.silent = silent.clone();
-            }
-            Command::Run {
-                test,
-                verbose,
-                debug,
-                quiet,
-                silent,
-                log_level,
-                config,
-                input,
-                output,
-                dry_run,
-                artifacts,
-            } => {
-                ret.test = test.clone();
-                ret.verbose = verbose.clone();
-                ret.debug = debug.clone();
-                ret.quiet = quiet.clone();
-                ret.silent = silent.clone();
-                ret.log_level = log_level.clone();
-                ret.config = config.clone();
-                ret.input = input.clone();
-                ret.output = output.clone();
-                ret.dry_run = dry_run.clone();
-                ret.artifacts = artifacts.clone();
-            }
-            _ => {}
-        }
-        return ret;
+        value.clone().into()
     }
 }
 
@@ -427,23 +362,60 @@ impl From<Args> for SimpleOpts {
                 test,
                 verbose,
                 debug,
+                trace,
                 quiet,
                 silent,
                 log_level,
                 config,
-                input,
                 output,
                 dry_run,
                 artifacts,
             } => {
+                ret.mode = CommandType::Run;
                 ret.test = test;
                 ret.verbose = verbose;
                 ret.debug = debug;
+                ret.trace = trace;
                 ret.quiet = quiet;
                 ret.silent = silent;
                 ret.log_level = log_level;
-                ret.config = config;
-                ret.input = input;
+                ret.config = match config {
+                    None => {
+                        debug!("Probing for test toml.");
+                        let toml: Option<PathBuf> = None;
+                        for i in env::current_dir().unwrap().read_dir().unwrap() {
+                            let res = i.unwrap();
+                            if res.path().extension().unwrap().to_str().unwrap() == "toml" {
+                                if toml.is_some() {
+                                    error!(
+                                        "apcs-tester found two tomls! Specify which one to use!"
+                                    );
+                                    panic!("failed to determine what to use.");
+                                }
+                            }
+                        }
+                        match toml {
+                            Some(s) => s,
+                            None => {
+                                error!(
+                                    "Since user did not give config, Probed for config in cd: {}",
+                                    env::current_dir().unwrap().to_str().unwrap()
+                                );
+                                error!("However, failed to find a toml file.");
+                                panic!("failed to find config.");
+                            }
+                        }
+                    }
+                    Some(p) => {
+                        if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml") {
+                            error!(
+                                "Unrecognized file format or illegal path: {}",
+                                p.to_str().unwrap()
+                            );
+                        }
+                        p
+                    }
+                };
                 ret.output = output;
                 ret.dry_run = dry_run;
                 ret.artifacts = artifacts;
@@ -459,19 +431,21 @@ pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::new);
 
 pub fn proc_args() {
     match &ARGS.command {
-        Command::Init { silent, quiet } => {}
+        Command::Init { silent, quiet } => {
+            if !*quiet && !*silent {
+                println!(
+                    "Initializing test in {}",
+                    env::current_dir().unwrap().to_str().unwrap()
+                );
+            }
+        }
         Command::Run {
             test,
             verbose,
             debug,
-            quiet,
-            silent,
-            log_level,
-            config,
-            input,
+            trace,
             output,
-            dry_run,
-            artifacts,
+            ..
         } => {
             if *test != None {
                 println!("Test mode is enabled. Ignoring rest of arguments.");
@@ -482,20 +456,10 @@ pub fn proc_args() {
             if *debug {
                 debug!("Debug mode enabled");
             };
-            if *config == None {
-                error!("No configuration file specified! The program will attempt to find one inside the target directory.");
-            };
-            if *input == None {
-                error!("No input file or directory specified");
-                if *config == None {
-                    error!("No input directory nor config file! Tester does not know what to do!");
-                    panic!("Unable to run anything!");
-                }
-            } else if input.clone().unwrap().is_file() {
-                if *config == None {
-                    panic!("Cannot probe config file with only one provided file.");
-                }
+            if *trace {
+                trace!("Trace mode enabled");
             }
+
             if *output == None {
                 info!("No output file or directory specified. falling back to stdout.");
             } else {
@@ -533,3 +497,12 @@ pub fn proc_args() {
         _ => {}
     }
 }
+
+pub static MULTIPROG: Lazy<Mutex<MultiProgress>> = Lazy::new(|| Mutex::new(MultiProgress::new()));
+
+pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    [
+        "java", "jar", "c", "cpp", "rs", "py", "tar", "tar.gz", "gz", "zip",
+    ]
+    .into()
+});
