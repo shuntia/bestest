@@ -142,7 +142,7 @@ struct ConfigParams {
     lang: Option<String>,
     args: Option<Vec<String>>,
     target: Option<PathBuf>,
-    input: Option<Vec<Vec<String>>>,
+    input: Option<Vec<String>>,
     output: Option<Vec<String>>,
     points: Option<Vec<u64>>,
     timeout: Option<u64>,
@@ -160,7 +160,7 @@ pub struct Config {
     pub lang: Language,
     pub args: Vec<String>,
     pub target: PathBuf,
-    pub input: Vec<Vec<String>>,
+    pub input: Vec<String>,
     pub output: Vec<String>,
     pub points: Vec<u64>,
     pub timeout: u64,
@@ -433,7 +433,7 @@ pub fn proc_args() {
     match &ARGS.command {
         Command::Init { silent, quiet } => {
             if !*quiet && !*silent {
-                println!(
+                info!(
                     "Initializing test in {}",
                     env::current_dir().unwrap().to_str().unwrap()
                 );
@@ -448,7 +448,7 @@ pub fn proc_args() {
             ..
         } => {
             if *test != None {
-                println!("Test mode is enabled. Ignoring rest of arguments.");
+                info!("Test mode is enabled. Ignoring rest of arguments.");
             }
             if *verbose {
                 info!("Verbose mode enabled");

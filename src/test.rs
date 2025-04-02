@@ -7,6 +7,8 @@ use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
 use tokio::sync::Semaphore;
 
 use crate::config::MULTIPROG;
+use crate::executable::Language;
+use crate::lang::runner;
 use crate::{
     config::{self, CONFIG},
     executable::Executable,
@@ -68,6 +70,7 @@ pub struct TestResult<T> {
     pub correct: bool,
     loc: Option<Vec<WrongLine<T>>>,
 }
+
 impl<T> TestResult<T> {
     pub fn is_correct(&self) -> bool {
         self.correct
@@ -90,17 +93,24 @@ impl<T> TestResult<T> {
             loc: Some(s),
         }
     }
+    pub fn msg(&self) -> String {
+        if self.is_correct() {
+            style("[AC]").green().bold().to_string()
+        } else {
+            style("[NG]").red().bold().to_string()
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct WrongLine<T> {
-    before: Option<Range<T>>,
-    after: Range<T>,
+    before: Range<T>,
+    after: (Range<T>, String),
 }
 
 pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
     p: T,
-) -> Vec<Result<Vec<TestResult<usize>>, String>> {
+) -> Vec<Result<TestResult<usize>, String>> {
     let max_threads = config::get_config().unwrap().threads;
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
     let mut handles = vec![];
@@ -108,13 +118,11 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
     if mp.clear().is_err() {
         error!("failed to clear multiprog instance!");
     }
-    let mut it = p.into_iter();
-    let mut v = vec![];
-    let op = mp.add(ProgressBar::new(it.by_ref().count() as u64));
-    for i in it {
-        v.push(i.clone());
+    let v = p.into_iter().collect::<Vec<PathBuf>>();
+    let op = mp.add(ProgressBar::new(v.len() as u64));
+    for i in &v {
         handles.push(tokio::task::spawn(test_file_semaphore(
-            i,
+            i.clone(),
             semaphore.clone(),
         )));
     }
@@ -124,98 +132,98 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
     for i in handles {
         ret.push(i.await.unwrap());
         match ret.get(acc).unwrap() {
-            Ok(o) => info!(
-                "Completed {} with result: {:?}",
-                v.get(acc).unwrap().file_name().unwrap().to_str().unwrap(),
-                o
-            ),
+            Ok(o) => {
+                debug!(
+                    "Completed {} with result: {:?}",
+                    v.get(acc).unwrap().file_name().unwrap().to_str().unwrap(),
+                    o
+                );
+                info!(
+                    "{} {}",
+                    o.msg(),
+                    v.get(acc).unwrap().file_name().unwrap().to_str().unwrap()
+                );
+            }
             Err(e) => info!("Program errored out: {}", e),
         }
         acc += 1;
         op.inc(1);
     }
+    op.finish_and_clear();
+    info!("All tests complete.");
     return ret;
 }
 
 pub async fn test_file_semaphore(
     path: PathBuf,
     semaphore: Arc<Semaphore>,
-) -> Result<Vec<TestResult<usize>>, String> {
+) -> Result<TestResult<usize>, String> {
     let permit = semaphore.acquire().await.unwrap();
     let ret = test_file(path).await;
     drop(permit);
     ret
 }
 
-async fn test_file_semaphore_prog(
-    path: PathBuf,
-    semaphore: Arc<Semaphore>,
-) -> Result<Vec<TestResult<usize>>, String> {
-    let mut mp = MULTIPROG.lock().unwrap();
-    let prog = mp.add(ProgressBar::new_spinner());
-    prog.clone()
-        .with_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner} Testing {msg}")
-                .unwrap(),
-        )
-        .set_message(format!("{}", path.clone().to_str().unwrap()));
-    let ret = test_file_semaphore(path.clone(), semaphore).await;
-    prog.with_finish(ProgressFinish::WithMessage(
-        match &ret {
-            Ok(_) => format!(
-                "{} All test have passed for {}",
-                style("[AC] ").bold().green(),
-                path.to_str().unwrap()
-            ),
-            Err(e) => format!(
-                "{} Failed to run Program: {} due to {}",
-                style("[ERR]").bold().red(),
-                path.to_str().unwrap(),
-                e
-            ),
-        }
-        .into(),
-    ));
-    ret
-}
-
-pub async fn test_file(path: PathBuf) -> Result<Vec<TestResult<usize>>, String> {
+pub async fn test_file(path: PathBuf) -> Result<TestResult<usize>, String> {
     info!("testing {:?}", path);
     let timeout = config::get_config().unwrap().timeout;
-    let mut exec = Executable::new(path.clone(), false);
-    let mut proc;
+    let mut proc = runner::from_dir(path.clone(), Some(Language::Java))
+        .await
+        .unwrap();
     let expected_in = config::get_config().unwrap().input.clone();
     let expected_out = config::get_config().unwrap().output.clone();
-    let result = vec![];
+    let mut wrong = vec![];
     for i in 0..expected_in.len() {
-        proc = exec.dry_run().await.unwrap();
+        proc.run().await.unwrap();
         let _ = proc.read_all();
-        for j in expected_in.get(i).unwrap() {
-            proc.stdin(j.to_string()).unwrap_or_else(|e| {
+        proc.stdin(expected_in.get(i).unwrap().clone())
+            .await
+            .unwrap_or_else(|e| {
                 error!(
                     "failed to input stdin for process: {}",
                     &path.to_string_lossy()
                 );
                 error!("Reason: {}", e)
-            })
-        }
-        while !proc.running() {
-            if proc.runtime().unwrap() > Duration::new(timeout / 1000, (timeout % 1000) as u32) {
-                match proc.signal(nix::sys::signal::Signal::SIGKILL) {
+            });
+
+        while !proc.running().await {
+            if proc.runtime().await.unwrap()
+                > Duration::new(timeout / 1000, (timeout % 1000) as u32)
+            {
+                match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
                     Err(e) => error!("failed to kill process: {}", e),
                     Ok(()) => {}
                 }
                 info!("Waiting for kill...");
-                while !proc.running() {}
+                while !proc.running().await {}
                 return Err("Timed out.".into());
             }
         }
-        let out = proc.read_all()?;
+        let out = proc.read_all().await?;
         let input = InternedInput::new(expected_out.get(i).unwrap().as_str(), &out.as_str());
-        imara_diff::diff(Algorithm::Histogram, input)
+        let sink = |before: Range<u32>, after: Range<u32>| {
+            let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
+                .iter()
+                .map(|&line| input.interner[line])
+                .collect();
+            wrong.push(WrongLine::<usize> {
+                before: before.start as usize..before.end as usize,
+                after: (
+                    after.start as usize..after.end as usize,
+                    hunk_after.join("\n").to_owned(),
+                ),
+            });
+        };
+        imara_diff::diff(Algorithm::Histogram, &input, sink);
     }
-    Ok(result)
+    if wrong.is_empty() {
+        Ok(TestResult::correct())
+    } else {
+        Ok(TestResult {
+            correct: false,
+            loc: Some(wrong),
+        })
+    }
 }
 
 pub fn test_proc(proc: std::process::Child) -> Result<TestResult<usize>, String> {

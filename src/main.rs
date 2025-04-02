@@ -7,18 +7,17 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::Write,
-    ops::Deref,
     path::PathBuf,
     process::exit,
 };
-use walkdir::WalkDir;
+use tokio::fs::remove_dir_all;
 pub mod checker;
 pub mod config;
 pub mod executable;
 pub mod lang;
 pub mod test;
 pub mod unpacker;
-use checker::{check_dir, check_dirs, IllegalExpr};
+use checker::{check_dirs, IllegalExpr};
 use config::*;
 
 #[tokio::main]
@@ -57,6 +56,14 @@ async fn main() {
     debug!("Config:\n{}", (*config).clone());
     let target = unpacker::unpack_dir(CONFIG.target.clone()).await;
     debug!("Starting safety checks...");
+    debug!(
+        "checking: {:?}",
+        target
+            .iter()
+            .cloned()
+            .filter_map(|el| el.ok())
+            .collect::<Vec<_>>()
+    );
     let check_result: HashMap<PathBuf, Vec<IllegalExpr>> =
         check_dirs(target.iter().cloned().filter_map(|el| el.ok()).collect())
             .await
@@ -85,6 +92,11 @@ async fn main() {
         exec.remove(&i.0);
     }
     info!("Testing...");
-    let res = test::test_dirs(exec);
-    info!("{:#?}", res.await);
+    debug!("Target dirs: {:?}", exec);
+    let res = test::test_dirs(exec).await;
+    info!("{:#?}", res);
+    if !SIMPLEOPTS.artifacts {
+        info!("cleaning up...");
+        remove_dir_all(TEMPDIR.clone()).await.unwrap();
+    }
 }

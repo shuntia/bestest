@@ -1,11 +1,17 @@
+use super::java::JavaRunner;
+use crate::{config::CONFIG, executable::Language, unpacker::find_in_dir};
+use async_trait::async_trait;
+use log::{error, info, warn};
+use nix::sys::signal::Signal;
 use std::{
     fmt::{Display, Formatter},
+    future::Future,
     path::PathBuf,
-    process::ChildStdout,
+    process::ExitStatus,
     time,
 };
+use tokio::process::ChildStdout;
 
-use nix::sys::signal::Signal;
 #[derive(Debug)]
 pub struct Error {
     pub description: String,
@@ -22,18 +28,92 @@ impl Display for Error {
         write!(f, "error: {}", self.description)
     }
 }
+
+pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runner>> {
+    //probe
+    if lang.is_some() {
+        if lang.unwrap() != Language::Java {
+            error!("Language other than java not yet implemented!");
+            return None;
+        }
+    }
+    let entry = match &CONFIG.entry {
+        Some(s) => {
+            match find_in_dir(&p, &s) {
+                Some(s) => s,
+                None => {
+                    error!("Failed to find entry point! Falling back to \"Main\".");
+                    match find_in_dir(&p, "main") {
+                        Some(s) => s,
+                        None => {
+                            error!("Failed to find main!");
+                            if p.read_dir().unwrap().into_iter().count() > 1 {
+                                error!("There are too many files! Failed to determine which one to use!");
+                                return None;
+                            } else {
+                                warn!("Will run any file inside target directory.");
+                                p.read_dir()
+                                    .unwrap()
+                                    .into_iter()
+                                    .next()
+                                    .unwrap()
+                                    .ok()
+                                    .map(|el| el.path())
+                                    .unwrap()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            error!("User provided no entry point! Falling back to \"Main\".");
+            match find_in_dir(&p, "main") {
+                Some(s) => s,
+                None => {
+                    error!("Failed to find main!");
+                    if p.read_dir().unwrap().into_iter().count() > 1 {
+                        error!("There are too many files! Failed to determine which one to use!");
+                        return None;
+                    } else {
+                        warn!("Will run any file inside target directory.");
+                        p.read_dir()
+                            .unwrap()
+                            .into_iter()
+                            .next()
+                            .unwrap()
+                            .ok()
+                            .map(|el| el.path())
+                            .unwrap()
+                    }
+                }
+            }
+        }
+    };
+    info!("Finished probing. Entry point: {:?}", entry);
+    match entry.extension().unwrap().to_str().unwrap() {
+        "java" => Some(Box::new(JavaRunner::new_from_venv(p, entry).await.unwrap())),
+        ext => {
+            error!("Unknown extension: {}", ext);
+            None
+        }
+    }
+}
+
 impl std::error::Error for Error {}
 
-pub trait Runner: Send {
-    fn new(p: PathBuf) -> Result<Self, Error>
+#[async_trait]
+pub trait Runner: Send + Sync {
+    async fn new_from_venv(p: PathBuf, entry: PathBuf) -> Result<Self, Error>
     where
         Self: Sized;
-    fn running(&self) -> bool;
-    fn run(&mut self) -> Result<(), Error>;
-    fn get_lang(&self) -> crate::executable::Language;
-    fn stdin(&mut self, s: String) -> Result<(), String>;
-    fn stdout(&mut self) -> Option<&mut ChildStdout>;
-    fn read_all(&mut self) -> Result<String, String>;
-    fn runtime(&self) -> Result<time::Duration, ()>;
-    fn signal(&mut self, s: Signal) -> Result<(), String>;
+    async fn running(&self) -> bool;
+    async fn run(&mut self) -> Result<(), Error>;
+    async fn get_lang(&self) -> crate::executable::Language;
+    async fn stdin(&mut self, s: String) -> Result<(), String>;
+    async fn stdout(&mut self) -> Option<&mut ChildStdout>;
+    async fn read_all(&mut self) -> Result<String, String>;
+    async fn runtime(&self) -> Result<time::Duration, ()>;
+    async fn signal(&mut self, s: Signal) -> Result<(), String>;
+    async fn exitcode(&mut self) -> Result<Option<ExitStatus>, std::io::Error>;
 }

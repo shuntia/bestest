@@ -2,6 +2,7 @@ use crate::lang::runner;
 use crate::lang::runner::Runner;
 use log::*;
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use strum_macros::EnumIter;
@@ -17,10 +18,24 @@ pub struct Executable {
 
 impl Executable {
     pub fn new(path: PathBuf, venv: bool) -> Self {
+        let mut acc = "".to_owned();
+        let filen = path.file_name().unwrap().to_str();
+        let lang = crate::config::match_ext(
+            path.extension()
+                .unwrap_or_else(|| {
+                    let loc = filen.iter().find(|e| e == &&"").unwrap();
+                    for i in (*loc).chars() {
+                        acc.push(i);
+                    }
+                    &OsStr::new(&acc)
+                })
+                .to_str()
+                .unwrap(),
+        );
         Executable {
             path: path.clone(),
             venv,
-            language: crate::config::match_ext(path.extension().unwrap().to_str().unwrap()),
+            language: lang,
         }
     }
     pub async fn dry_run(&mut self) -> Result<Box<dyn Runner>, runner::Error> {
@@ -34,8 +49,8 @@ impl Executable {
     pub fn execute(&mut self, args: &str) -> Result<Box<dyn Runner>, runner::Error> {
         match &self.language {
             Language::Java => {
-                return Ok(Box::new(crate::lang::java::JavaRunner::new(
-                    self.path.clone(),
+                return Ok(Box::new(tokio::runtime::Runtime::new().unwrap().block_on(
+                    crate::lang::java::JavaRunner::new_from_venv(self.path.clone(), PathBuf::new()),
                 )?))
             }
             Language::C => {}
@@ -132,14 +147,6 @@ fn contains_in_zip(p: &PathBuf, target: &str) -> ZipResult<bool> {
         }
     }
     Ok(false)
-}
-fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {
-    for e in WalkDir::new(p).into_iter() {
-        if e.as_ref().unwrap().file_name() == target {
-            return Some(e.unwrap().into_path());
-        }
-    }
-    None
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, EnumIter, Serialize)]

@@ -1,15 +1,14 @@
 use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, SIMPLEOPTS, TEMPDIR};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
-use std::error::Error;
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 use tokio::fs::{copy, create_dir};
 use tokio::sync::Semaphore;
+use walkdir::WalkDir;
 use zip::read::ZipArchive;
-use zip::result::ZipError;
 
 #[derive(Debug, Clone)]
 pub enum UnpackError {
@@ -90,7 +89,8 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         }
         op.inc(1);
     }
-    op.finish_with_message("All checks complete.");
+    op.finish_and_clear();
+    info!("All unpacks complete.");
     ret
 }
 
@@ -201,4 +201,20 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     }
     error!("Regex capture failed! File name format or config may be faulty.");
     Err(UnpackError::FileFormat)
+}
+
+pub fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {
+    for e in WalkDir::new(p).into_iter() {
+        if e.as_ref()
+            .unwrap()
+            .file_name()
+            .to_str()
+            .unwrap()
+            .to_lowercase()
+            .contains(&target.to_lowercase())
+        {
+            return Some(e.unwrap().into_path());
+        }
+    }
+    None
 }
