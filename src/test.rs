@@ -65,7 +65,7 @@ impl TestCase {
 
 const CHEAT_ENABLED: [&'static str; 2] = ["kartik", "shunta"];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestResult<T> {
     pub correct: bool,
     loc: Option<Vec<WrongLine<T>>>,
@@ -102,7 +102,7 @@ impl<T> TestResult<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WrongLine<T> {
     before: Range<T>,
     after: (Range<T>, String),
@@ -138,11 +138,6 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
                     v.get(acc).unwrap().file_name().unwrap().to_str().unwrap(),
                     o
                 );
-                info!(
-                    "{} {}",
-                    o.msg(),
-                    v.get(acc).unwrap().file_name().unwrap().to_str().unwrap()
-                );
             }
             Err(e) => info!("Program errored out: {}", e),
         }
@@ -159,9 +154,28 @@ pub async fn test_file_semaphore(
     semaphore: Arc<Semaphore>,
 ) -> Result<TestResult<usize>, String> {
     let permit = semaphore.acquire().await.unwrap();
-    let ret = test_file(path).await;
+    let ret = test_file(path.clone()).await;
     drop(permit);
+    if ret.is_ok() {
+        info!("{} {}", ret.clone().unwrap().msg(), path.to_str().unwrap());
+    }
     ret
+}
+
+pub async fn test_file_progress(
+    path: PathBuf,
+    semaphore: Arc<Semaphore>,
+    prog: ProgressBar,
+) -> Result<TestResult<usize>, String> {
+    prog.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner} Unpacking {msg}")
+            .unwrap(),
+    );
+    let ret = test_file_semaphore(path.clone(), semaphore).await;
+
+    prog.finish_and_clear();
+    return ret;
 }
 
 pub async fn test_file(path: PathBuf) -> Result<TestResult<usize>, String> {
@@ -216,6 +230,7 @@ pub async fn test_file(path: PathBuf) -> Result<TestResult<usize>, String> {
         };
         imara_diff::diff(Algorithm::Histogram, &input, sink);
     }
+
     if wrong.is_empty() {
         Ok(TestResult::correct())
     } else {

@@ -39,7 +39,7 @@ async fn main() {
     LogWrapper::new(config::MULTIPROG.lock().unwrap().clone(), logger)
         .try_init()
         .expect("Failed to initialize logger!");
-    info!("logger started!");
+    debug!("logger started!");
     proc_args();
     info!("Welcome to the APCS Homework tester!");
     match &args.mode {
