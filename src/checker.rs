@@ -1,59 +1,100 @@
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::*;
 use serde::Serialize;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
-    sync::{Mutex, Semaphore},
+    sync::{Mutex, MutexGuard, Semaphore},
     task,
 };
 
 use walkdir::WalkDir;
 
-use crate::config;
+use crate::config::{self, MULTIPROG};
 #[derive(Debug, Clone, Serialize)]
 pub enum Type {
     AST,
     Static,
 }
 
-pub async fn check_dirs(
-    path: Vec<std::path::PathBuf>,
-) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
+pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
     crate::config::get_config()?;
-    let results: Arc<Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let results = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     let max_threads = config::get_config().unwrap().threads;
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
-    let mut handles = vec![];
-    let errors = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
-    for i in path {
-        for entry in WalkDir::new(i).into_iter().filter(|el| {
-            config::KNOWN_EXTENSIONS.contains(
-                match &el.as_ref().unwrap().clone().path().extension() {
+    let errors = Arc::new(tokio::sync::Mutex::new(Vec::<(PathBuf, String)>::new()));
+
+    // Wrap MultiProgress in an Arc so it can be shared between tasks.
+    let mp = Arc::new(MultiProgress::new());
+    mp.clear().unwrap();
+
+    // Collect entries first
+    let mut entries = vec![];
+    for path in paths {
+        for entry in WalkDir::new(path)
+            .into_iter()
+            .filter(|el| {
+                config::KNOWN_EXTENSIONS.contains(match el.as_ref().unwrap().path().extension() {
                     Some(s) => s.to_str().unwrap(),
                     None => "java",
-                },
-            )
-        }) {
-            let handle = task::spawn(changefile(
-                results.clone(),
-                semaphore.clone(),
-                entry.unwrap().into_path(),
-                errors.clone(),
-            ));
-            handles.push(handle);
+                })
+            })
+            .filter(|el| el.as_ref().unwrap().path().is_file())
+        {
+            entries.push(entry.unwrap().into_path());
         }
     }
-    let total_tasks = handles.len();
-    let prog = indicatif::ProgressBar::new(total_tasks as u64);
+
+    // Create a progress bar for overall progress using the correct count.
+    let op = Arc::new(tokio::sync::Mutex::new(
+        mp.add(ProgressBar::new(entries.len() as u64)),
+    ));
+    let mut handles = vec![];
+
+    for entry in entries {
+        let results = results.clone();
+        let semaphore = semaphore.clone();
+        let errors = errors.clone();
+        let op = op.clone();
+        let mp = mp.clone();
+        let handle = tokio::spawn(changefile_prog(results, semaphore, entry, errors, op, mp));
+        handles.push(handle);
+    }
+    op.lock().await.finish_and_clear();
     for h in handles {
         h.await.unwrap();
-        prog.inc(1);
     }
     for e in errors.lock().await.clone() {
         error!("{} at {:?}", e.1, e.0);
     }
+    mp.clear().unwrap();
     let ret = std::mem::take(&mut *results.lock().await);
     Ok(ret)
+}
+
+pub async fn changefile_prog(
+    results: Arc<tokio::sync::Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>>,
+    semaphore: Arc<Semaphore>,
+    entry: PathBuf,
+    errors: Arc<tokio::sync::Mutex<Vec<(PathBuf, String)>>>,
+    op: Arc<tokio::sync::Mutex<ProgressBar>>,
+    mp: Arc<MultiProgress>,
+) {
+    let prog = mp
+        .add(ProgressBar::new_spinner())
+        .with_message(entry.file_name().unwrap().to_str().unwrap().to_owned());
+    info!(
+        "Setting the status: {}",
+        entry.file_name().unwrap().to_str().unwrap().to_owned()
+    );
+    prog.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner} checking {msg}")
+            .unwrap(),
+    );
+    prog.enable_steady_tick(Duration::from_millis(50));
+    let _ = changefile(results, semaphore, entry, errors).await;
+    prog.finish_and_clear();
+    op.lock().await.inc(1);
 }
 
 pub async fn check_dir(
@@ -108,6 +149,7 @@ async fn changefile(
         dir.clone(),
         match check_file(dir.clone()).await {
             Err(e) => {
+                error!("ERROR");
                 errs.lock().await.push((dir.clone(), e));
                 return;
             }
@@ -118,6 +160,7 @@ async fn changefile(
 }
 
 pub async fn check_file(path: std::path::PathBuf) -> Result<Vec<IllegalExpr>, String> {
+    debug!("checking {:?}", path);
     let cfg = crate::config::get_config()?;
     match cfg.checker {
         Type::AST => {
@@ -139,7 +182,7 @@ pub struct IllegalExpr {
 pub mod static_check {
     use std::{collections::HashSet, fs::File, io::Read, path::PathBuf};
 
-    use log::warn;
+    use log::{debug, warn};
     use strum::IntoEnumIterator;
     use strum_macros::{AsRefStr, EnumIter};
 
@@ -148,7 +191,7 @@ pub mod static_check {
     use super::IllegalExpr;
     pub fn check(path: PathBuf) -> Result<Vec<IllegalExpr>, String> {
         let allowcfg = crate::config::get_config().unwrap().allow.clone();
-        let lang = crate::config::get_config().unwrap().lang.clone();
+        let lang: Language = path.extension().unwrap().to_str().unwrap().into();
         let mut allowed = HashSet::new();
         for i in allowcfg {
             allowed.insert(match Allow::from_str(i.as_str()).get(0) {
@@ -161,11 +204,12 @@ pub mod static_check {
         }
         let prohibited: Vec<Allow> = Allow::iter().filter(|el| !allowed.contains(el)).collect();
         let mut prohibited_str: Vec<(Allow, &str)> = Vec::new();
-        for i in prohibited {
+        for i in &prohibited {
             for j in i.get_prohibited(lang.clone()) {
                 prohibited_str.push((i.clone(), j));
             }
         }
+        debug!("Illegal strings: {:?}", prohibited);
         let mut f = match File::open(&path) {
             Ok(f) => Ok(f),
             Err(e) => Err(e.to_string()),

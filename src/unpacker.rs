@@ -10,7 +10,6 @@ use tokio::fs::{copy, create_dir};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
-use tokio::time::sleep;
 use walkdir::WalkDir;
 use zip::read::ZipArchive;
 
@@ -98,9 +97,6 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         }
     }
     op.lock().await.finish_and_clear();
-    //timeout for io flush
-    tokio::io::stderr().flush().await.unwrap();
-    sleep(Duration::from_millis(100)).await;
     info!("All unpacks complete.");
     ret
 }

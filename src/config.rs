@@ -34,7 +34,9 @@ fn load_config() -> Config {
             ) == "toml" =>
             {
                 let mut string = String::new();
-                let _ = File::open(s).unwrap().read_to_string(&mut string);
+                let _ = File::open(s)
+                    .expect("Config does not exist in specified location!")
+                    .read_to_string(&mut string);
                 toml::from_str(string.as_str()).expect("Illegal config! Failed to parse TOML!")
             }
             _ => {
@@ -105,21 +107,23 @@ pub fn generate_regex(format: &str) -> Regex {
 
     Regex::new(&format!("^{}$", pattern)).unwrap()
 }
-pub fn from(value: String) -> Language {
-    match value.as_str() {
-        "java" => Language::Java,
-        "jar" => Language::Java,
-        "cpp" => Language::Cpp,
-        "c" => Language::C,
-        "rs" => Language::Rust,
-        "py" => Language::Python,
-        _ => Language::Unknown("".into()),
+
+impl From<&str> for Language {
+    fn from(value: &str) -> Language {
+        match value {
+            "java" => Language::Java,
+            "jar" => Language::Java,
+            "cpp" => Language::Cpp,
+            "c" => Language::C,
+            "rs" => Language::Rust,
+            "py" => Language::Python,
+            _ => Language::Unknown("".into()),
+        }
     }
 }
-
 #[deprecated]
 pub fn match_ext(s: &str) -> Language {
-    from(s.to_owned())
+    Language::from(s)
 }
 
 pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {

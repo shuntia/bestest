@@ -9,6 +9,7 @@ use std::{
     io::Write,
     path::PathBuf,
     process::exit,
+    str::FromStr,
 };
 use tokio::fs::remove_dir_all;
 pub mod checker;
@@ -89,7 +90,11 @@ async fn main() {
         .map(|el| PathBuf::from(el.unwrap().path()))
         .collect();
     for i in check_result {
-        exec.remove(&i.0);
+        let mut rem = i.0;
+        while rem.parent().unwrap().to_path_buf() != *TEMPDIR {
+            rem = rem.parent().unwrap().to_path_buf();
+        }
+        exec.remove(&rem);
     }
     info!("Testing...");
     debug!("Target dirs: {:?}", exec);
