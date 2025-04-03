@@ -137,7 +137,11 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
                     o
                 );
             }
-            Err(e) => info!("Program errored out: {}", e),
+            Err(e) => info!(
+                "{} errored out: {}",
+                v.get(acc).unwrap().file_name().unwrap().to_str().unwrap(),
+                e
+            ),
         }
         acc += 1;
         op.inc(1);
@@ -201,16 +205,16 @@ pub async fn test_file(path: PathBuf) -> Result<TestResult<usize>, String> {
                 );
                 error!("Reason: {}", e)
             });
-
-        while !proc.running().await {
-            if proc.runtime().await.unwrap()
-                > Duration::new(timeout / 1000, (timeout % 1000) as u32)
-            {
+        while proc.running().await {
+            if proc.runtime().await.unwrap() > Duration::from_millis(timeout) {
+                info!(
+                    "{} has been running for too long. Killing process...",
+                    path.file_name().unwrap().to_str().unwrap()
+                );
                 match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
                     Err(e) => error!("failed to kill process: {}", e),
                     Ok(()) => {}
                 }
-                info!("Waiting for kill...");
                 while !proc.running().await {}
                 return Err("Timed out.".into());
             }

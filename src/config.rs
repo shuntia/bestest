@@ -69,7 +69,7 @@ fn load_config() -> Config {
         allow: cp.allow.unwrap_or(vec![]),
         format: match &cp.format {
             Some(s) => s.into(),
-            None => "{name}_{num}_{id}.{ext}".into(),
+            None => "{name}_{num}_{id}_{filename}.{extension}".into(),
         },
         orderby: cp.orderby.unwrap_or(Orderby::Id),
     };
@@ -191,12 +191,12 @@ impl Default for Config {
             input: vec![],
             output: vec![],
             points: vec![],
-            timeout: 500,
+            timeout: 10000,
             memory: 10,
             threads: 5,
             checker: checker::Type::AST,
             allow: vec![],
-            format: "{name}_{num}_{num}.{ext}".into(),
+            format: "{name}_{num}_{id}_{filename}.{extension}".into(),
             orderby: Orderby::Id,
         }
     }

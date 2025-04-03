@@ -107,7 +107,7 @@ pub trait Runner: Send + Sync {
     async fn new_from_venv(p: PathBuf, entry: PathBuf) -> Result<Self, Error>
     where
         Self: Sized;
-    async fn running(&self) -> bool;
+    async fn running(&mut self) -> bool;
     async fn run(&mut self) -> Result<(), Error>;
     async fn get_lang(&self) -> crate::executable::Language;
     async fn stdin(&mut self, s: String) -> Result<(), String>;

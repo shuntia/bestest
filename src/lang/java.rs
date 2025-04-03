@@ -9,6 +9,7 @@ use std::{
     os::unix::process::CommandExt,
     path::PathBuf,
     process::{ExitStatus, Stdio},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -23,6 +24,7 @@ pub struct JavaRunner {
     venv: Option<PathBuf>,
     entry: PathBuf,
     deps: Vec<PathBuf>,
+    exitcode: OnceLock<i32>,
 }
 
 impl JavaRunner {
@@ -104,6 +106,7 @@ impl Runner for JavaRunner {
                     venv: None,
                     entry: entry.clone(),
                     deps: vec![],
+                    exitcode: OnceLock::new(),
                 };
                 ret.command
                     .arg(&entry)
@@ -120,6 +123,7 @@ impl Runner for JavaRunner {
                     venv: None,
                     entry: entry.clone(),
                     deps: vec![],
+                    exitcode: OnceLock::new(),
                 };
                 ret.command
                     .arg("--jar")
@@ -133,10 +137,20 @@ impl Runner for JavaRunner {
     }
     async fn run(&mut self) -> Result<(), Error> {
         self.process = Some(self.command.spawn().unwrap());
+        self.start = Some(Instant::now());
         Ok(())
     }
-    async fn running(&self) -> bool {
-        self.process.is_some()
+    async fn running(&mut self) -> bool {
+        match &mut self.process {
+            Some(s) => match s.try_wait().unwrap() {
+                Some(s) => {
+                    let _ = self.exitcode.set(s.code().unwrap());
+                    false
+                }
+                None => true,
+            },
+            None => false,
+        }
     }
     async fn get_lang(&self) -> Language {
         Language::Java
