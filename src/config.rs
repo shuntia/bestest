@@ -1,7 +1,7 @@
 use crate::checker;
 use crate::executable::Language;
 use clap::*;
-use indicatif::MultiProgress;
+use indicatif::{MultiProgress, ProgressDrawTarget};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::LazyCell;
@@ -498,7 +498,8 @@ pub fn proc_args() {
     }
 }
 
-pub static MULTIPROG: Lazy<Mutex<MultiProgress>> = Lazy::new(|| Mutex::new(MultiProgress::new()));
+pub static MULTIPROG: Lazy<Mutex<MultiProgress>> =
+    Lazy::new(|| Mutex::new(MultiProgress::with_draw_target(ProgressDrawTarget::stdout())));
 
 pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [

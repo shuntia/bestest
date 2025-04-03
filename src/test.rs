@@ -3,16 +3,14 @@ use imara_diff::{diff, intern::InternedInput, Algorithm};
 use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
 use log::{debug, error, info};
 use std::sync::{Arc, Mutex};
+use std::thread::Thread;
 use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
 use tokio::sync::Semaphore;
 
 use crate::config::MULTIPROG;
+use crate::config::{self, CONFIG};
 use crate::executable::Language;
 use crate::lang::runner;
-use crate::{
-    config::{self, CONFIG},
-    executable::Executable,
-};
 pub struct TestCase {
     input: String,
     expected: String,
@@ -115,15 +113,15 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
     let mut handles = vec![];
     let mp = MULTIPROG.lock().unwrap();
-    if mp.clear().is_err() {
-        error!("failed to clear multiprog instance!");
-    }
+    let _ = mp.clear();
     let v = p.into_iter().collect::<Vec<PathBuf>>();
     let op = mp.add(ProgressBar::new(v.len() as u64));
+    op.enable_steady_tick(Duration::from_millis(100));
     for i in &v {
-        handles.push(tokio::task::spawn(test_file_semaphore(
+        handles.push(tokio::task::spawn(test_file_progress(
             i.clone(),
             semaphore.clone(),
+            mp.add(ProgressBar::new_spinner()),
         )));
     }
     debug!("Processing: {:#?}", v);
@@ -169,11 +167,15 @@ pub async fn test_file_progress(
 ) -> Result<TestResult<usize>, String> {
     prog.set_style(
         ProgressStyle::default_spinner()
-            .template("{spinner} Unpacking {msg}")
+            .template("{spinner} testing {msg}")
             .unwrap(),
     );
+    let file = path.clone().to_path_buf();
+    let filename = file.file_name().unwrap();
+    let filenamestr = filename.to_str().unwrap().to_owned();
+    prog.set_message(filenamestr);
+    prog.enable_steady_tick(Duration::from_millis(50));
     let ret = test_file_semaphore(path.clone(), semaphore).await;
-
     prog.finish_and_clear();
     return ret;
 }

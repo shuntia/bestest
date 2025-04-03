@@ -4,9 +4,13 @@ use log::{debug, error, info, warn};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 use tokio::fs::{copy, create_dir};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
+use tokio::time::sleep;
 use walkdir::WalkDir;
 use zip::read::ZipArchive;
 
@@ -56,8 +60,12 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
     }
     info!("unpacking...");
     let mp = MULTIPROG.lock().unwrap();
-    let op = mp.add(ProgressBar::new(p.read_dir().unwrap().count() as u64));
-
+    let op = Arc::new(Mutex::new(
+        mp.add(ProgressBar::new(p.read_dir().unwrap().count() as u64)),
+    ));
+    op.lock()
+        .await
+        .enable_steady_tick(Duration::from_millis(50));
     for entry in p.read_dir().unwrap() {
         let prog = mp.add(ProgressBar::new_spinner());
         prog.set_style(
@@ -65,6 +73,7 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
                 .template("{spinner} Unpacking {msg}")
                 .unwrap(),
         );
+        prog.enable_steady_tick(Duration::from_millis(50));
         handles.push(tokio::task::spawn(unpack_semaphore_prog(
             entry.unwrap().path(),
             semaphore.clone(),
@@ -87,9 +96,11 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
                 err => error!("Failed to unpack: {:?}", err),
             },
         }
-        op.inc(1);
     }
-    op.finish_and_clear();
+    op.lock().await.finish_and_clear();
+    //timeout for io flush
+    tokio::io::stderr().flush().await.unwrap();
+    sleep(Duration::from_millis(100)).await;
     info!("All unpacks complete.");
     ret
 }
@@ -98,10 +109,10 @@ async fn unpack_semaphore_prog(
     p: PathBuf,
     s: Arc<Semaphore>,
     pr: ProgressBar,
-    op: ProgressBar,
+    op: Arc<Mutex<ProgressBar>>,
 ) -> Result<PathBuf, UnpackError> {
     let ret = unpack_semaphore(p.clone(), s).await;
-    op.inc(1);
+    op.lock().await.inc(1);
     pr.finish_and_clear();
     debug!("Completed {}", p.to_str().unwrap());
     ret
@@ -140,7 +151,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             }
         }
         let s;
-        let ext = if let Some(ext) = caps.name("ext") {
+        let ext = if let Some(ext) = caps.name("extension") {
             ext.as_str()
         } else if let Some(ext_os) = p.extension() {
             if let Some(ext_str) = ext_os.to_str() {
