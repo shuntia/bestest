@@ -184,6 +184,7 @@ pub async fn test_file_progress(
     semaphore: Arc<Semaphore>,
     prog: ProgressBar,
 ) -> (PathBuf, Result<Vec<TestResult>, RunError>) {
+    let permit = semaphore.acquire().await.unwrap();
     prog.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner} compiling {msg}")
@@ -219,7 +220,9 @@ pub async fn test_file_progress(
             .template("{spinner} testing {msg}")
             .unwrap(),
     );
-    let ret = test_proc_semaphore(path.clone(), semaphore, &mut Box::new(proc)).await;
+    let ret = test_proc(path.clone(), &mut Box::new(proc)).await;
+    drop(permit);
+    info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
     prog.finish_and_clear();
     return (path, Ok(ret));
 }

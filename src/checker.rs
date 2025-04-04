@@ -82,10 +82,6 @@ pub async fn changefile_prog(
     let prog = mp
         .add(ProgressBar::new_spinner())
         .with_message(entry.file_name().unwrap().to_str().unwrap().to_owned());
-    info!(
-        "Setting the status: {}",
-        entry.file_name().unwrap().to_str().unwrap().to_owned()
-    );
     prog.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner} checking {msg}")

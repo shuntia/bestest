@@ -41,7 +41,7 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
             match find_in_dir(&p, &s) {
                 Some(s) => s,
                 None => {
-                    error!("Failed to find entry point! Falling back to \"Main\".");
+                    warn!("Failed to find entry point! Falling back to \"Main\".");
                     match find_in_dir(&p, "main") {
                         Some(s) => s,
                         None => {
@@ -66,7 +66,7 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
             }
         }
         None => {
-            error!("User provided no entry point! Falling back to \"Main\".");
+            warn!("User provided no entry point! Falling back to \"Main\".");
             match find_in_dir(&p, "main") {
                 Some(s) => s,
                 None => {
