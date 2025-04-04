@@ -99,7 +99,6 @@ async fn main() {
     info!("Testing...");
     debug!("Target dirs: {:?}", exec);
     let res = test::test_dirs(exec).await;
-    info!("{:#?}", res);
     if !SIMPLEOPTS.artifacts {
         info!("cleaning up...");
         remove_dir_all(TEMPDIR.clone()).await.unwrap();

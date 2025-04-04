@@ -1,7 +1,8 @@
-use super::runner::{Error, Runner};
+use super::runner::{Error, RunError, Runner};
 use crate::executable::Language;
 use async_trait::async_trait;
-use log::info;
+use itertools::Itertools;
+use log::{debug, info, warn};
 use nix::sys::signal::{kill, Signal};
 use std::{
     fs::{copy, read_dir},
@@ -52,6 +53,35 @@ impl JavaRunner {
 
 #[async_trait]
 impl Runner for JavaRunner {
+    async fn prepare(&mut self) -> Result<(), RunError> {
+        if self.entry.extension().unwrap().to_str().unwrap() == "jar" {
+            info!(
+                "Skipping compile for jar file {}",
+                self.entry.to_str().unwrap()
+            );
+            warn!("If this file only contains .java files, this may greatly decrease efficiency.");
+            Ok(())
+        } else {
+            let mut compiler = Command::new("javac")
+                .current_dir(self.venv.clone().unwrap())
+                .arg(self.entry.to_str().unwrap())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            match compiler.wait().await {
+                Ok(s) => {
+                    if s.code().unwrap() == 0 {
+                        Ok(())
+                    } else {
+                        let mut r = String::new();
+                        compiler.stderr.unwrap().read_to_string(&mut r).await;
+                        Err(RunError::CE(Some(s.code().unwrap()), r))
+                    }
+                }
+                Err(e) => Err(RunError::CE(None, e.to_string())),
+            }
+        }
+    }
     async fn stdin(&mut self, input: String) -> Result<(), String> {
         match &mut self.process {
             Some(s) => s
@@ -103,15 +133,17 @@ impl Runner for JavaRunner {
                     start: None,
                     command: Command::new("java"),
                     process: None,
-                    venv: None,
+                    venv: Some(venv.clone()),
                     entry: entry.clone(),
                     deps: vec![],
                     exitcode: OnceLock::new(),
                 };
                 ret.command
-                    .arg(&entry)
-                    .arg(format!("--cp {}", venv.to_str().unwrap()))
+                    .arg("-cp")
+                    .arg(venv.to_str().unwrap())
+                    .arg(&entry.file_stem().unwrap())
                     .stdin(Stdio::piped())
+                    .stderr(Stdio::piped())
                     .stdout(Stdio::piped());
             }
             "jar" => {
@@ -120,7 +152,7 @@ impl Runner for JavaRunner {
                     start: None,
                     command: Command::new("java"),
                     process: None,
-                    venv: None,
+                    venv: Some(venv),
                     entry: entry.clone(),
                     deps: vec![],
                     exitcode: OnceLock::new(),
@@ -135,7 +167,18 @@ impl Runner for JavaRunner {
         };
         Ok(ret)
     }
-    async fn run(&mut self) -> Result<(), Error> {
+    async fn run(&mut self) -> Result<(), RunError> {
+        let mut contains = false;
+        for i in self.venv.as_ref().unwrap().read_dir().unwrap() {
+            if i.unwrap().path().extension().unwrap().to_str().unwrap() == "class" {
+                contains = true;
+                break;
+            }
+        }
+        if !contains {
+            info!("Hasn't been compiled and prepared yet! Compiling...");
+            self.prepare().await?;
+        }
         self.process = Some(self.command.spawn().unwrap());
         self.start = Some(Instant::now());
         Ok(())

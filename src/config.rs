@@ -1,7 +1,10 @@
 use crate::checker;
 use crate::executable::Language;
+use crate::test::TestCase;
 use clap::*;
 use indicatif::{MultiProgress, ProgressDrawTarget};
+use itertools::EitherOrBoth::{Both, Left, Right};
+use itertools::Itertools;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::LazyCell;
@@ -47,14 +50,42 @@ fn load_config() -> Config {
         error!("What do you mean target is none? Why are you running this program!?");
         exit(1);
     }
+
     let config = Config {
         entry: cp.entry,
         lang: Language::Guess,
         target: cp.target.unwrap_or(std::env::current_dir().unwrap()),
         args: cp.args.unwrap_or(vec![]),
-        input: cp.input.unwrap_or(vec![]),
-        output: cp.output.unwrap_or(vec![]),
-        points: cp.points.unwrap_or(vec![]),
+        testcases: cp
+            .input
+            .unwrap_or(vec![])
+            .iter()
+            .zip(cp.output.unwrap_or(vec![]).iter())
+            .zip_longest(cp.points.unwrap_or(vec![]).iter())
+            .map(move |eob| match eob {
+                Both((a, b), c) => TestCase {
+                    input: a.to_string(),
+                    expected: b.to_string(),
+                    points: *c,
+                },
+                Left((a, b)) => {
+                    info!("Found test case without any points! Falling back to zero points.");
+                    TestCase {
+                        input: a.to_string(),
+                        expected: b.to_string(),
+                        points: 0,
+                    }
+                }
+                Right(c) => {
+                    error!("Points without any I/O! Did you forget to add the cases?");
+                    TestCase {
+                        input: "".into(),
+                        expected: "".into(),
+                        points: *c,
+                    }
+                }
+            })
+            .collect(),
         timeout: cp.timeout.unwrap_or(5),
         memory: cp.memory.unwrap_or(1024),
         threads: cp.threads.unwrap_or(4),
@@ -72,9 +103,6 @@ fn load_config() -> Config {
             None => "{name}_{num}_{id}_{filename}.{extension}".into(),
         },
         orderby: cp.orderby.unwrap_or(Orderby::Id),
-    };
-    if config.input.len() != config.output.len() {
-        warn!("CONFIG: potential misalignment in input-output pair.");
     };
     config
 }
@@ -164,9 +192,7 @@ pub struct Config {
     pub lang: Language,
     pub args: Vec<String>,
     pub target: PathBuf,
-    pub input: Vec<String>,
-    pub output: Vec<String>,
-    pub points: Vec<u64>,
+    pub testcases: Vec<TestCase>,
     pub timeout: u64,
     pub memory: u64,
     pub threads: u64,
@@ -175,6 +201,7 @@ pub struct Config {
     pub format: String,
     pub orderby: Orderby,
 }
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Orderby {
     Name,
@@ -188,9 +215,7 @@ impl Default for Config {
             lang: Language::Guess,
             args: vec![],
             target: env::current_dir().unwrap(),
-            input: vec![],
-            output: vec![],
-            points: vec![],
+            testcases: vec![],
             timeout: 10000,
             memory: 10,
             threads: 5,
@@ -207,9 +232,7 @@ impl Display for Config {
         writeln!(f, "Language: {:?}", self.lang)?;
         writeln!(f, "Args: {:?}", self.args)?;
         writeln!(f, "Target: {:?}", self.target)?;
-        writeln!(f, "Input: {:?}", self.input)?;
-        writeln!(f, "Output: {:?}", self.output)?;
-        writeln!(f, "Points: {:?}", self.points)?;
+        writeln!(f, "Test Cases: {:?}", self.testcases)?;
         writeln!(f, "Timeout: {:?}", self.timeout)?;
         writeln!(f, "Memory: {:?}MB", self.memory)?;
         writeln!(f, "Threads: {:?}", self.threads)?;

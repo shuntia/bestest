@@ -5,9 +5,8 @@ use log::{error, info, warn};
 use nix::sys::signal::Signal;
 use std::{
     fmt::{Display, Formatter},
-    future::Future,
     path::PathBuf,
-    process::ExitStatus,
+    process::{ExitCode, ExitStatus},
     time,
 };
 use tokio::process::ChildStdout;
@@ -102,13 +101,20 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
 
 impl std::error::Error for Error {}
 
+#[derive(Debug)]
+pub enum RunError {
+    CE(Option<i32>, String),
+    RE(Option<i32>, String),
+}
+
 #[async_trait]
 pub trait Runner: Send + Sync {
+    async fn prepare(&mut self) -> Result<(), RunError>;
     async fn new_from_venv(p: PathBuf, entry: PathBuf) -> Result<Self, Error>
     where
         Self: Sized;
     async fn running(&mut self) -> bool;
-    async fn run(&mut self) -> Result<(), Error>;
+    async fn run(&mut self) -> Result<(), RunError>;
     async fn get_lang(&self) -> crate::executable::Language;
     async fn stdin(&mut self, s: String) -> Result<(), String>;
     async fn stdout(&mut self) -> Option<&mut ChildStdout>;
