@@ -79,17 +79,17 @@ pub async fn changefile_prog(
     op: Arc<tokio::sync::Mutex<ProgressBar>>,
     mp: Arc<MultiProgress>,
 ) {
-    let prog = mp
-        .add(ProgressBar::new_spinner())
-        .with_message(entry.file_name().unwrap().to_str().unwrap().to_owned());
-    prog.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner} checking {msg}")
-            .unwrap(),
-    );
-    prog.enable_steady_tick(Duration::from_millis(50));
+    //let prog = mp
+    //    .add(ProgressBar::new_spinner())
+    //    .with_message(entry.file_name().unwrap().to_str().unwrap().to_owned());
+    //prog.set_style(
+    //    ProgressStyle::default_spinner()
+    //        .template("{spinner} checking {msg}")
+    //        .unwrap(),
+    //);
+    //prog.enable_steady_tick(Duration::from_millis(50));
     let _ = changefile(results, semaphore, entry, errors).await;
-    prog.finish_and_clear();
+    //prog.finish_and_clear();
     op.lock().await.inc(1);
 }
 
