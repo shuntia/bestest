@@ -13,33 +13,58 @@ edit the configuration files
 ### Configuration
 
 lang: only supports `Guess` and `Java` for now.
+
 args: command-line arguments to pass to the compiler, in list format(`[]`)
+
 target: target directory. `apcs_tester init` automatically sets this for you.
+
 input: List of strings that shall be passed to `stdin` for every test case
+
 output: Expected `stdout` from program
+
 points: Point distribution
+
 timeout: Program timeout(in ms)
+
 threads: Number of concurrent threads for compilation + execution
+
 checker: AST or static checker. AST checker is unlikely to be implemented.
+
 allow: Allowed dangerous program actions 
+
 format: File format of test cases(i.e. name, id, extension, num, alpha, alnum)
+
 orderby: Order output by Name/Id
+
 dependencies: Files to be moved into the root of the virtual environment
+
 entry: entry point for the program(unnecessary for some languages, but currently required.)
+
 
 ### Command-line options
 
   -v, --verbose                verbose mode
+
       --debug                  debug mode
+
       --trace                  trace mode
+
   -q, --quiet                  quiet mode
+
   -s, --silent                 silent mode
+
   -l, --log-level <LOG_LEVEL>  log level
+
       --config <CONFIG>        configuration file for tests
+
   -o, --output <OUTPUT>        output file or directory for results
+
       --dry-run                dry-run and just execute, don't input anything
+
   -a, --artifacts              leave artifacts
+
   -h, --help                   Print help
+
 
 ### Contribution
 
