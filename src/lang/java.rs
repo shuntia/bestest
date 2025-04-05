@@ -1,11 +1,11 @@
 use super::runner::{Error, RunError, Runner};
-use crate::executable::Language;
+use crate::{config::CONFIG, executable::Language};
 use async_trait::async_trait;
 use itertools::Itertools;
-use log::{debug, info, warn};
+use log::{debug, error, warn};
 use nix::sys::signal::{kill, Signal};
 use std::{
-    fs::{copy, read_dir},
+    fs::read_dir,
     io::{Read, Write},
     os::unix::process::CommandExt,
     path::PathBuf,
@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
+    fs::{copy, symlink},
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdout, Command},
 };
@@ -28,34 +29,34 @@ pub struct JavaRunner {
     exitcode: OnceLock<i32>,
 }
 
-impl JavaRunner {
-    /// appends dependencies for execution. automatically creates a venv.
-    pub async fn add_dep(&mut self, p: PathBuf) -> Result<(), String> {
+#[async_trait]
+impl Runner for JavaRunner {
+    async fn add_dep(&mut self, p: PathBuf) -> Result<(), String> {
         self.deps.push(p.clone());
         let mut target = self.venv.clone().unwrap();
         target.push(PathBuf::from(p.file_name().unwrap()));
-        copy(p, target).map_err(|e| format!("{}", e).to_owned())?;
+        copy(p, target)
+            .await
+            .map_err(|e| format!("{}", e).to_owned())?;
         Ok(())
     }
-    /// appends dependencies for execution. automatically creates a venv.
-    pub async fn append_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String> {
+    async fn add_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String> {
         self.deps.extend(p.clone());
         let venvdir = self.venv.clone();
         std::fs::create_dir(venvdir.clone().unwrap()).map_err(|e| format!("{}", e).to_owned())?;
         for i in p {
             let mut target = venvdir.clone().unwrap();
             target.push(PathBuf::from(i.file_name().unwrap()));
-            copy(i, target).map_err(|e| format!("{}", e).to_owned())?;
+            copy(i, target)
+                .await
+                .map_err(|e| format!("{}", e).to_owned())?;
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl Runner for JavaRunner {
     async fn prepare(&mut self) -> Result<(), RunError> {
         if self.entry.extension().unwrap().to_str().unwrap() == "jar" {
-            info!(
+            debug!(
                 "Skipping compile for jar file {}",
                 self.entry.to_str().unwrap()
             );
@@ -128,7 +129,7 @@ impl Runner for JavaRunner {
         let ext: String = entry.extension().unwrap().to_string_lossy().into();
         match ext.as_str() {
             "java" => {
-                info!("detected bare java file.");
+                debug!("detected bare java file.");
                 ret = JavaRunner {
                     start: None,
                     command: Command::new("java"),
@@ -147,7 +148,7 @@ impl Runner for JavaRunner {
                     .stdout(Stdio::piped());
             }
             "jar" => {
-                info!("detected java executable archive.");
+                debug!("detected java executable archive.");
                 ret = JavaRunner {
                     start: None,
                     command: Command::new("java"),
@@ -176,7 +177,7 @@ impl Runner for JavaRunner {
             }
         }
         if !contains {
-            info!("Hasn't been compiled and prepared yet! Compiling...");
+            debug!("Hasn't been compiled and prepared yet! Compiling...");
             self.prepare().await?;
         }
         self.process = Some(self.command.spawn().unwrap());

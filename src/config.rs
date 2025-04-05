@@ -1,4 +1,4 @@
-use crate::checker;
+use crate::checker::{self, Type};
 use crate::executable::Language;
 use crate::test::TestCase;
 use clap::*;
@@ -7,7 +7,6 @@ use itertools::EitherOrBoth::{Both, Left, Right};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::cell::LazyCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
@@ -69,7 +68,7 @@ fn load_config() -> Config {
                     points: *c,
                 },
                 Left((a, b)) => {
-                    info!("Found test case without any points! Falling back to zero points.");
+                    debug!("Found test case without any points! Falling back to zero points.");
                     TestCase {
                         input: a.to_string(),
                         expected: b.to_string(),
@@ -89,20 +88,14 @@ fn load_config() -> Config {
         timeout: cp.timeout.unwrap_or(5),
         memory: cp.memory.unwrap_or(1024),
         threads: cp.threads.unwrap_or(4),
-        checker: cp
-            .checker
-            .map(|x| match x.as_str() {
-                "static" => checker::Type::Static,
-                "ast" => checker::Type::AST,
-                _ => checker::Type::AST,
-            })
-            .unwrap(),
+        checker: cp.checker.unwrap_or(Type::Static),
         allow: cp.allow.unwrap_or(vec![]),
         format: match &cp.format {
             Some(s) => s.into(),
             None => "{name}_{num}_{id}_{filename}.{extension}".into(),
         },
         orderby: cp.orderby.unwrap_or(Orderby::Id),
+        dependencies: cp.dependencies.unwrap_or(vec![]),
     };
     config
 }
@@ -169,7 +162,7 @@ pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
 pub static CONFIG: Lazy<Config> = Lazy::new(load_config);
 
 #[derive(Serialize, Deserialize)]
-struct ConfigParams {
+pub struct ConfigParams {
     entry: Option<String>,
     lang: Option<String>,
     args: Option<Vec<String>>,
@@ -180,10 +173,33 @@ struct ConfigParams {
     timeout: Option<u64>,
     memory: Option<u64>,
     threads: Option<u64>,
-    checker: Option<String>,
+    checker: Option<Type>,
     allow: Option<Vec<String>>,
     format: Option<String>,
     orderby: Option<Orderby>,
+    dependencies: Option<Vec<PathBuf>>,
+}
+
+impl Default for ConfigParams {
+    fn default() -> Self {
+        ConfigParams {
+            entry: None,
+            lang: Some("Guess".into()),
+            args: Some(vec![]),
+            target: Some(env::current_dir().unwrap()),
+            input: Some(vec![]),
+            output: Some(vec![]),
+            points: Some(vec![]),
+            timeout: Some(10000),
+            memory: None,
+            threads: Some(5),
+            checker: Some(Type::Static),
+            format: Some("{name}_{num}_{id}_{filename}.{extension}".into()),
+            allow: Some(vec![]),
+            orderby: Some(Orderby::Name),
+            dependencies: Some(vec![]),
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -200,6 +216,7 @@ pub struct Config {
     pub allow: Vec<String>,
     pub format: String,
     pub orderby: Orderby,
+    pub dependencies: Vec<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -219,10 +236,11 @@ impl Default for Config {
             timeout: 10000,
             memory: 10,
             threads: 5,
-            checker: checker::Type::AST,
+            checker: checker::Type::Static,
             allow: vec![],
             format: "{name}_{num}_{id}_{filename}.{extension}".into(),
             orderby: Orderby::Id,
+            dependencies: vec![],
         }
     }
 }
@@ -475,10 +493,10 @@ pub fn proc_args() {
             ..
         } => {
             if *test != None {
-                info!("Test mode is enabled. Ignoring rest of arguments.");
+                debug!("Test mode is enabled. Ignoring rest of arguments.");
             }
             if *verbose {
-                info!("Verbose mode enabled");
+                debug!("Verbose mode enabled");
             };
             if *debug {
                 debug!("Debug mode enabled");
@@ -488,13 +506,13 @@ pub fn proc_args() {
             }
 
             if *output == None {
-                info!("No output file or directory specified. falling back to stdout.");
+                debug!("No output file or directory specified. falling back to stdout.");
             } else {
                 let tmp = output.clone().unwrap();
                 if tmp.is_dir() {
                     unimplemented!("Output is a directory! Not supported yet.");
                 } else {
-                    info!("Output file: {}", tmp.display());
+                    debug!("Output file: {}", tmp.display());
                     match tmp
                         .extension()
                         .expect("Expected file format!")
@@ -502,10 +520,10 @@ pub fn proc_args() {
                         .unwrap()
                     {
                         "json" => {
-                            info!("Output format: JSON");
+                            debug!("Output format: JSON");
                         }
                         "txt" => {
-                            info!("Output format: Plaintext");
+                            debug!("Output format: Plaintext");
                         }
                         _ => {
                             error!(

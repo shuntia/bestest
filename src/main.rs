@@ -1,3 +1,4 @@
+use console::style;
 use env_logger;
 use indicatif_log_bridge::LogWrapper;
 use log::LevelFilter;
@@ -47,7 +48,7 @@ async fn main() {
         CommandType::Init => {
             info!("creating bare config file...");
             let mut f = File::create("config.toml").unwrap();
-            let buf = toml::to_string_pretty(&Config::default()).unwrap();
+            let buf = toml::to_string_pretty(&ConfigParams::default()).unwrap();
             f.write(buf.as_bytes()).expect("failed to write to config!");
             exit(0);
         }
@@ -74,7 +75,10 @@ async fn main() {
             .map(|el| (el.0.clone(), el.1.clone()))
             .collect();
     if check_result.is_empty() {
-        info!("All checks passed.");
+        info!(
+            "{} All checks passed.",
+            style("[AC]").green().bold().to_string()
+        );
     } else {
         warn!("Dangerous code detected.");
         for i in &check_result {
@@ -96,11 +100,12 @@ async fn main() {
         }
         exec.remove(&rem);
     }
-    info!("Testing...");
+    info!("Starting tests...");
     debug!("Target dirs: {:?}", exec);
     let res = test::test_dirs(exec).await;
+    debug!("Results: {:#?}", res);
     if !SIMPLEOPTS.artifacts {
-        info!("cleaning up...");
+        debug!("cleaning up...");
         remove_dir_all(TEMPDIR.clone()).await.unwrap();
     }
 }

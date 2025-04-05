@@ -1,7 +1,7 @@
 use super::java::JavaRunner;
 use crate::{config::CONFIG, executable::Language, unpacker::find_in_dir};
 use async_trait::async_trait;
-use log::{error, info, warn};
+use log::{debug, error, warn};
 use nix::sys::signal::Signal;
 use std::{
     fmt::{Display, Formatter},
@@ -9,6 +9,7 @@ use std::{
     process::{ExitCode, ExitStatus},
     time,
 };
+use tokio::fs::copy;
 use tokio::process::ChildStdout;
 
 #[derive(Debug)]
@@ -36,13 +37,21 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
             return None;
         }
     }
+    for i in &CONFIG.dependencies {
+        if copy(i, p.clone().join(i.file_name().unwrap()))
+            .await
+            .is_err()
+        {
+            error!("Failed to copy dependency: {:?}", i);
+        };
+    }
     let entry = match &CONFIG.entry {
         Some(s) => {
             match find_in_dir(&p, &s) {
                 Some(s) => s,
                 None => {
                     warn!("Failed to find entry point! Falling back to \"Main\".");
-                    match find_in_dir(&p, "main") {
+                    match find_in_dir(&p, "main").or(find_in_dir(&p, "Main")) {
                         Some(s) => s,
                         None => {
                             error!("Failed to find main!");
@@ -89,7 +98,7 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
             }
         }
     };
-    info!("Finished probing. Entry point: {:?}", entry);
+    debug!("Finished probing. Entry point: {:?}", entry);
     match entry.extension().unwrap().to_str().unwrap() {
         "java" => Some(Box::new(JavaRunner::new_from_venv(p, entry).await.unwrap())),
         ext => {
@@ -122,4 +131,6 @@ pub trait Runner: Send + Sync {
     async fn runtime(&self) -> Result<time::Duration, ()>;
     async fn signal(&mut self, s: Signal) -> Result<(), String>;
     async fn exitcode(&mut self) -> Result<Option<ExitStatus>, std::io::Error>;
+    async fn add_dep(&mut self, p: PathBuf) -> Result<(), String>;
+    async fn add_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String>;
 }

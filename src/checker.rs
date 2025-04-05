@@ -1,6 +1,6 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, MutexGuard, Semaphore},
@@ -10,7 +10,7 @@ use tokio::{
 use walkdir::WalkDir;
 
 use crate::config::{self, MULTIPROG};
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Type {
     AST,
     Static,

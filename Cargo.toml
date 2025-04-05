@@ -27,3 +27,4 @@ zip = "2.4.2"
 
 [features]
 cheat=[]
+symlink=[]
