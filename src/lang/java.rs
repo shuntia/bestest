@@ -1,20 +1,17 @@
 use super::runner::{Error, RunError, Runner};
-use crate::{config::CONFIG, executable::Language};
+use crate::executable::Language;
 use async_trait::async_trait;
-use itertools::Itertools;
-use log::{debug, error, warn};
+use log::{debug, warn};
 use nix::sys::signal::{kill, Signal};
 use std::{
-    fs::read_dir,
     io::{Read, Write},
-    os::unix::process::CommandExt,
     path::PathBuf,
     process::{ExitStatus, Stdio},
     sync::OnceLock,
     time::{Duration, Instant},
 };
 use tokio::{
-    fs::{copy, symlink},
+    fs::copy,
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdout, Command},
 };

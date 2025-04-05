@@ -10,7 +10,6 @@ use std::{
     io::Write,
     path::PathBuf,
     process::exit,
-    str::FromStr,
 };
 use tokio::fs::remove_dir_all;
 pub mod checker;

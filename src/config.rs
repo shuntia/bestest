@@ -14,8 +14,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{LazyLock, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
 
 #[allow(unused_imports)]

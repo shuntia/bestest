@@ -1,11 +1,10 @@
 use console::style;
 use imara_diff::{diff, intern::InternedInput, Algorithm};
-use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
-use std::thread::Thread;
-use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
+use std::sync::Arc;
+use std::{ops::Range, path::PathBuf, time::Duration};
 use tokio::sync::Semaphore;
 
 use crate::config::MULTIPROG;

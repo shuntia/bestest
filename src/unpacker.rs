@@ -1,5 +1,5 @@
 use crate::config::Orderby;
-use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, SIMPLEOPTS, TEMPDIR};
+use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use std::fs::{self, File};

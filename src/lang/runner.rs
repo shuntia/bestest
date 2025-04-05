@@ -6,7 +6,7 @@ use nix::sys::signal::Signal;
 use std::{
     fmt::{Display, Formatter},
     path::PathBuf,
-    process::{ExitCode, ExitStatus},
+    process::ExitStatus,
     time,
 };
 use tokio::fs::copy;
