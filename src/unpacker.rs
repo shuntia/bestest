@@ -1,3 +1,4 @@
+use crate::config::Orderby;
 use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, SIMPLEOPTS, TEMPDIR};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
@@ -7,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 use tokio::fs::{copy, create_dir};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use walkdir::WalkDir;
@@ -132,18 +132,15 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     let r = generate_regex(&CONFIG.format);
     let name;
     if let Some(caps) = r.captures(p.file_name().unwrap().to_str().unwrap()) {
-        match caps.name("name") {
+        match caps.name(match CONFIG.orderby {
+            Orderby::Name => "name",
+            Orderby::Id => "id",
+        }) {
             Some(s) => name = s,
             None => {
-                info!("name not found in regex! looking for id instead...");
-                match caps.name("id") {
-                    Some(s) => name = s,
-                    None => {
-                        error!("format requires {{name}} or {{id}} so that apcs-tester knows what to do!");
-                        info!("exiting...");
-                        panic!("faulty regex format.");
-                    }
-                }
+                error!("format requires {{name}} or {{id}} so that apcs-tester knows what to do!");
+                error!("Capture failed for {:?}", p);
+                return Err(UnpackError::FileFormat);
             }
         }
         let s;
