@@ -57,8 +57,8 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         error!("Expected path, instead got file! Unpacking single file anyway...");
         return vec![unpack(p).await];
     }
-    info!("unpacking...");
-    let mp = MULTIPROG.lock().unwrap();
+    debug!("unpacking...");
+    let mp = MULTIPROG.lock().await;
     let op = Arc::new(Mutex::new(
         mp.add(ProgressBar::new(p.read_dir().unwrap().count() as u64)),
     ));
@@ -70,7 +70,8 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         prog.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner} Unpacking {msg}")
-                .unwrap(),
+                .unwrap()
+                .tick_strings(&crate::config::SPINNER),
         );
         prog.enable_steady_tick(Duration::from_millis(50));
         handles.push(tokio::task::spawn(unpack_semaphore_prog(
@@ -85,7 +86,7 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         ret.push(i.await.unwrap());
         match ret.get(ret.len() - 1).unwrap() {
             Ok(p) => {
-                info!(
+                debug!(
                     "Successfully unpacked {}",
                     p.file_name().unwrap().to_str().unwrap()
                 )
@@ -97,7 +98,7 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         }
     }
     op.lock().await.finish_and_clear();
-    info!("All unpacks complete.");
+    debug!("All unpacks complete.");
     ret
 }
 
@@ -167,6 +168,9 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
                 return Err(UnpackError::FileType);
             }
         };
+        if ["toml", "json"].contains(&ext) {
+            return Err(UnpackError::Ignore);
+        }
         let mut target = TEMPDIR.clone();
         target.push(name.as_str());
         match create_dir(&target).await {
@@ -203,8 +207,8 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         }
         return Ok(target);
     }
-    error!("Regex capture failed! File name format or config may be faulty.");
-    Err(UnpackError::FileFormat)
+    debug!("Regex capture failed! Skipping file.");
+    Err(UnpackError::Ignore)
 }
 
 pub fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {

@@ -14,9 +14,10 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
+use tokio::sync::Mutex;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -552,3 +553,5 @@ pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     ]
     .into()
 });
+
+pub const SPINNER: [&'static str; 6] = ["", "", "", "", "", ""];

@@ -6,12 +6,14 @@ use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
     io::Write,
     path::PathBuf,
     process::exit,
 };
-use tokio::fs::remove_dir_all;
+use tokio::{
+    fs::{remove_dir_all, File},
+    io::AsyncWriteExt,
+};
 pub mod checker;
 pub mod config;
 pub mod executable;
@@ -37,7 +39,7 @@ async fn main() {
             _ => LevelFilter::Error,
         })
         .build();
-    LogWrapper::new(config::MULTIPROG.lock().unwrap().clone(), logger)
+    LogWrapper::new(config::MULTIPROG.lock().await.clone(), logger)
         .try_init()
         .expect("Failed to initialize logger!");
     debug!("logger started!");
@@ -46,9 +48,11 @@ async fn main() {
     match &args.mode {
         CommandType::Init => {
             info!("creating bare config file...");
-            let mut f = File::create("config.toml").unwrap();
+            let mut f = File::create_new("config.toml").await.unwrap();
             let buf = toml::to_string_pretty(&ConfigParams::default()).unwrap();
-            f.write(buf.as_bytes()).expect("failed to write to config!");
+            f.write_all(buf.as_bytes())
+                .await
+                .expect("failed to write to config!");
             exit(0);
         }
         _ => {}
@@ -56,7 +60,11 @@ async fn main() {
     let config = &CONFIG;
     debug!("Config:\n{}", (*config).clone());
     let target = unpacker::unpack_dir(CONFIG.target.clone()).await;
-    debug!("Starting safety checks...");
+    if target.is_empty() {
+        error!("Failed to unpack files. Are you sure the Regex and file format is correct?");
+        exit(0);
+    }
+    info!("Starting safety checks...");
     debug!(
         "checking: {:?}",
         target
@@ -75,7 +83,7 @@ async fn main() {
             .collect();
     if check_result.is_empty() {
         info!(
-            "{} All checks passed.",
+            "{} All safety checks passed.",
             style("[AC]").green().bold().to_string()
         );
     } else {
@@ -101,8 +109,34 @@ async fn main() {
     }
     info!("Starting tests...");
     debug!("Target dirs: {:?}", exec);
+    if exec.is_empty() {
+        error!("None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file.");
+        exit(0);
+    }
     let res = test::test_dirs(exec).await;
     debug!("Results: {:#?}", res);
+    let mut points = vec![];
+    for i in res {
+        let mut acc = 0;
+        for j in 0..i.1.len() {
+            if i.1[j].is_correct() {
+                acc += config.testcases[j].points
+            }
+        }
+        points.push((i.0.file_name().unwrap().to_str().unwrap().to_owned(), acc));
+    }
+    if let Some(s) = &SIMPLEOPTS.output {
+        let mut f = File::create_new(s).await.unwrap();
+        for i in points {
+            f.write_all(&format!("{}: {}\n", i.0, i.1).into_bytes())
+                .await
+                .expect("Failed to write to result file!");
+        }
+    } else {
+        for i in points {
+            println!("{}: {}", i.0, i.1);
+        }
+    }
     if !SIMPLEOPTS.artifacts {
         debug!("cleaning up...");
         remove_dir_all(TEMPDIR.clone()).await.unwrap();

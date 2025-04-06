@@ -9,7 +9,7 @@ clap = { version = "4.5.27", features = ["derive"] }
 console = "0.15.11"
 env_logger = "0.11.6"
 imara-diff = "0.1.8"
-indicatif = "0.17.11"
+indicatif = { version = "0.17.11", features = ["improved_unicode"] }
 indicatif-log-bridge = "0.2.3"
 itertools = "0.14.0"
 log = "0.4.25"

@@ -1,16 +1,15 @@
+use crate::config::{self, SPINNER};
+use crate::config::{CONFIG, MULTIPROG};
+use crate::executable::Language;
+use crate::lang::runner::{self, RunError, Runner};
 use console::style;
 use imara_diff::{diff, intern::InternedInput, Algorithm};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{ops::Range, path::PathBuf, time::Duration};
-use tokio::sync::Semaphore;
-
-use crate::config::MULTIPROG;
-use crate::config::{self, CONFIG};
-use crate::executable::Language;
-use crate::lang::runner::{self, RunError, Runner};
+use tokio::sync::{Mutex, MutexGuard, Semaphore};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TestCase {
     pub input: String,
@@ -111,17 +110,27 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
     let max_threads = config::get_config().unwrap().threads;
     let semaphore = Arc::new(Semaphore::new(max_threads as usize));
     let mut handles = vec![];
-    let mp = MULTIPROG.lock().unwrap();
+    let mp = MULTIPROG.lock().await;
     let _ = mp.clear();
     let v = p.into_iter().collect::<Vec<PathBuf>>();
     let op = mp.add(ProgressBar::new(v.len() as u64));
+    op.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "[{elapsed_precise}] running tests... [{wide_bar:.bold.cyan/blue}] ({pos}/{len})",
+            )
+            .unwrap()
+            .progress_chars("█─"),
+    );
     op.enable_steady_tick(Duration::from_millis(100));
-    for i in &v {}
+    let pass = Arc::new(Mutex::new(op));
+    let arcmp = Arc::new(mp);
     for i in &v {
         handles.push(tokio::task::spawn(test_file_progress(
             i.clone(),
             semaphore.clone(),
-            mp.add(ProgressBar::new_spinner()),
+            arcmp.clone(),
+            pass.clone(),
         )));
     }
     debug!("Processing: {:#?}", v);
@@ -130,32 +139,24 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
         let out = i.await.unwrap();
         if out.1.is_ok() {
             ret.push((out.0, out.1.unwrap()));
+        } else {
+            if let RunError::CE(code, reason) = out.1.unwrap_err() {
+                ret.push((
+                    out.0,
+                    vec![
+                        TestResult::Error {
+                            reason,
+                            code: code.unwrap()
+                        };
+                        CONFIG.testcases.len()
+                    ],
+                ));
+            }
         }
-        op.inc(1);
     }
-    op.finish_and_clear();
+    pass.lock().await.finish_and_clear();
     info!("All tests complete.");
     return ret;
-}
-
-pub async fn test_proc_semaphore(
-    path: PathBuf,
-    semaphore: Arc<Semaphore>,
-    proc: &mut Box<dyn Runner>,
-) -> Vec<TestResult> {
-    let permit = semaphore.acquire().await.unwrap();
-    let ret = test_proc(path.clone(), proc).await;
-    drop(permit);
-    info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
-    ret
-}
-
-pub async fn test_file_semaphore(path: PathBuf, semaphore: Arc<Semaphore>) -> Vec<TestResult> {
-    let permit = semaphore.acquire().await.unwrap();
-    let ret = test_file(path.clone()).await;
-    drop(permit);
-    info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
-    ret
 }
 
 pub fn print_tr_vec(tr: &Vec<TestResult>) -> String {
@@ -181,13 +182,22 @@ pub fn print_tr_vec(tr: &Vec<TestResult>) -> String {
 pub async fn test_file_progress(
     path: PathBuf,
     semaphore: Arc<Semaphore>,
-    prog: ProgressBar,
+    mp: Arc<MutexGuard<'static, MultiProgress>>,
+    op: Arc<Mutex<ProgressBar>>,
 ) -> (PathBuf, Result<Vec<TestResult>, RunError>) {
+    let prog = mp.add(ProgressBar::new_spinner());
     let permit = semaphore.acquire().await.unwrap();
     prog.set_style(
         ProgressStyle::default_spinner()
-            .template("{spinner} compiling {msg}")
-            .unwrap(),
+            .template(
+                format!(
+                    "{{spinner}} [{{elapsed_precise}}] {} compiling {{msg}}",
+                    style("[WJ]").dim().bold().to_string()
+                )
+                .as_str(),
+            )
+            .unwrap()
+            .tick_strings(&config::SPINNER),
     );
     let mut proc = match runner::from_dir(path.clone(), Some(Language::Java)).await {
         Some(s) => s,
@@ -197,7 +207,7 @@ pub async fn test_file_progress(
     let filename = file.file_name().unwrap();
     let filenamestr = filename.to_str().unwrap().to_owned();
     prog.set_message(filenamestr);
-    prog.enable_steady_tick(Duration::from_millis(50));
+    prog.enable_steady_tick(Duration::from_millis(100));
     match proc.prepare().await {
         Err(e) => {
             warn!(
@@ -205,94 +215,118 @@ pub async fn test_file_progress(
                 style("[CE]").bold().yellow(),
                 path.to_str().unwrap()
             );
+            debug!("{:#?}", e);
             return (path, Err(e));
         }
         Ok(_) => {}
     }
+    prog.finish_and_clear();
     info!(
         "{} {} Compiled successfully!",
         style("[OK]").green().bold().to_string(),
         path.to_str().unwrap()
     );
+    let prog = mp.add(ProgressBar::new(CONFIG.testcases.len() as u64));
     prog.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner} testing {msg}")
-            .unwrap(),
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner} [{elapsed_precise}] {msg} running tests [{wide_bar:.bold.cyan/blue}]({pos}/{len})",
+            )
+            .unwrap()
+            .progress_chars("─▶ "),
     );
-    let ret = test_proc(path.clone(), &mut Box::new(proc)).await;
+    prog.enable_steady_tick(Duration::from_millis(50));
+    let tc = &CONFIG.testcases;
+    prog.set_message(style("[WJ] [0/?]").dim().bold().to_string());
+    let mut ret = vec![];
+    let mut correct = 0;
+    for i in 0..tc.len() {
+        let push = test_proc(path.clone(), &mut proc, &tc[i]).await;
+        if push.is_correct() {
+            correct += 1;
+        }
+        if correct != i + 1 {
+            prog.set_message(
+                style(format!("[NG] [{}/{}]", correct, tc.len()))
+                    .red()
+                    .bold()
+                    .to_string(),
+            );
+        } else {
+            prog.set_message(
+                style(format!("[AC] [{}/{}]", correct, tc.len()))
+                    .green()
+                    .bold()
+                    .to_string(),
+            );
+        }
+        ret.push(push);
+        prog.inc(1);
+    }
     drop(permit);
+    op.lock().await.inc(1);
     info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
     prog.finish_and_clear();
     return (path, Ok(ret));
 }
 
-pub async fn test_file(path: PathBuf) -> Vec<TestResult> {
-    test_proc(
-        path.clone(),
-        &mut Box::new(runner::from_dir(path, Some(Language::Java)).await.unwrap()),
-    )
-    .await
-}
-pub async fn test_proc(path: PathBuf, proc: &mut Box<dyn Runner>) -> Vec<TestResult> {
+pub async fn test_proc(
+    path: PathBuf,
+    proc: &mut Box<dyn Runner>,
+    testcase: &'static TestCase,
+) -> TestResult {
     let timeout = config::get_config().unwrap().timeout;
-    let testcases = &CONFIG.testcases;
-    let mut ret = vec![];
-    for i in 0..testcases.len() {
-        let mut wrong = vec![];
-        proc.run().await.unwrap();
-        let _ = proc.read_all();
-        proc.stdin(testcases.get(i).unwrap().input.clone())
-            .await
-            .unwrap_or_else(|e| {
-                error!(
-                    "failed to input stdin for process: {}",
-                    &path.to_string_lossy()
-                );
-                error!("Reason: {}", e)
-            });
-        while proc.running().await {
-            if proc.runtime().await.unwrap() > Duration::from_millis(timeout) {
-                info!(
-                    "{} has been running for too long. Killing process...",
-                    path.file_name().unwrap().to_str().unwrap()
-                );
-                match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
-                    Err(e) => error!("failed to kill process: {}", e),
-                    Ok(()) => {}
-                }
-                while !proc.running().await {}
-                ret.push(TestResult::Error {
-                    code: 9,
-                    reason: "Timed out.".into(),
-                });
+    let mut wrong = vec![];
+    proc.run().await.unwrap();
+    let _ = proc.read_all();
+    proc.stdin(testcase.input.clone())
+        .await
+        .unwrap_or_else(|e| {
+            error!(
+                "failed to input stdin for process: {}",
+                &path.to_string_lossy()
+            );
+            error!("Reason: {}", e)
+        });
+    while proc.running().await {
+        if proc.runtime().await.unwrap() > Duration::from_millis(timeout) {
+            info!(
+                "{} has been running for too long. Killing process...",
+                path.file_name().unwrap().to_str().unwrap()
+            );
+            match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
+                Err(e) => error!("failed to kill process: {}", e),
+                Ok(()) => {}
             }
-        }
-        let out = proc.read_all().await.unwrap();
-        let input = InternedInput::new(testcases.get(i).unwrap().expected.as_str(), &out.as_str());
-        let sink = |before: Range<u32>, after: Range<u32>| {
-            let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
-                .iter()
-                .map(|&line| input.interner[line])
-                .collect();
-            wrong.push(WrongLine::<usize> {
-                before: before.start as usize..before.end as usize,
-                after: (
-                    after.start as usize..after.end as usize,
-                    hunk_after.join("\n").to_owned(),
-                ),
-            });
-        };
-        imara_diff::diff(Algorithm::Histogram, &input, sink);
-        if !wrong.is_empty() {
-            ret.push(TestResult::Wrong {
-                case: testcases.get(i).unwrap(),
-                loc: wrong,
-            });
-        } else {
-            ret.push(TestResult::Correct {
-                case: testcases.get(i).unwrap(),
-            });
+            while !proc.running().await {}
+            return TestResult::Error {
+                code: 9,
+                reason: "Timed out.".into(),
+            };
         }
     }
-    ret
+    let out = proc.read_all().await.unwrap();
+    let input = InternedInput::new(testcase.expected.as_str(), &out.as_str());
+    let sink = |before: Range<u32>, after: Range<u32>| {
+        let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
+            .iter()
+            .map(|&line| input.interner[line])
+            .collect();
+        wrong.push(WrongLine::<usize> {
+            before: before.start as usize..before.end as usize,
+            after: (
+                after.start as usize..after.end as usize,
+                hunk_after.join("\n").to_owned(),
+            ),
+        });
+    };
+    imara_diff::diff(Algorithm::Histogram, &input, sink);
+    if !wrong.is_empty() {
+        return TestResult::Wrong {
+            case: &testcase,
+            loc: wrong,
+        };
+    } else {
+        return TestResult::Correct { case: &testcase };
+    }
 }

@@ -205,7 +205,6 @@ pub mod static_check {
                 prohibited_str.push((i.clone(), j));
             }
         }
-        debug!("Illegal strings: {:?}", prohibited);
         let mut f = match File::open(&path) {
             Ok(f) => Ok(f),
             Err(e) => Err(e.to_string()),
