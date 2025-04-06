@@ -48,7 +48,7 @@ async fn main() {
     match &args.mode {
         CommandType::Init => {
             info!("creating bare config file...");
-            let mut f = File::create_new("config.toml").await.unwrap();
+            let mut f = File::create("config.toml").await.unwrap();
             let buf = toml::to_string_pretty(&ConfigParams::default()).unwrap();
             f.write_all(buf.as_bytes())
                 .await
@@ -126,7 +126,7 @@ async fn main() {
         points.push((i.0.file_name().unwrap().to_str().unwrap().to_owned(), acc));
     }
     if let Some(s) = &SIMPLEOPTS.output {
-        let mut f = File::create_new(s).await.unwrap();
+        let mut f = File::create(s).await.unwrap();
         for i in points {
             f.write_all(&format!("{}: {}\n", i.0, i.1).into_bytes())
                 .await
