@@ -210,7 +210,7 @@ pub async fn test_file_progress(
     prog.enable_steady_tick(Duration::from_millis(100));
     match proc.prepare().await {
         Err(e) => {
-            warn!(
+            info!(
                 "{} {} Compile failed!",
                 style("[CE]").bold().yellow(),
                 path.to_str().unwrap()

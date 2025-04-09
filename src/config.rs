@@ -46,13 +46,16 @@ fn load_config() -> Config {
                 panic!("File extension not found! Config format guessing is not implemented yet!");
             }
         };
+    if cp.entry == None {
+        error!("User did not specify entry point! Falling back to\"Main\".")
+    }
     if cp.target == None {
-        error!("What do you mean target is none? Why are you running this program!?");
+        error!("Could not find target!");
         exit(1);
     }
 
     let config = Config {
-        entry: cp.entry,
+        entry: cp.entry.unwrap_or("Main".into()),
         lang: Language::Guess,
         target: cp.target.unwrap_or(std::env::current_dir().unwrap()),
         args: cp.args.unwrap_or(vec![]),
@@ -205,7 +208,7 @@ impl Default for ConfigParams {
 
 #[derive(Clone, Serialize)]
 pub struct Config {
-    pub entry: Option<String>,
+    pub entry: String,
     pub lang: Language,
     pub args: Vec<String>,
     pub target: PathBuf,
@@ -229,7 +232,7 @@ pub enum Orderby {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            entry: None,
+            entry: "".into(),
             lang: Language::Guess,
             args: vec![],
             target: env::current_dir().unwrap(),

@@ -45,38 +45,13 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
             error!("Failed to copy dependency: {:?}", i);
         };
     }
-    let entry = match &CONFIG.entry {
-        Some(s) => {
-            match find_in_dir(&p, &s) {
-                Some(s) => s,
-                None => {
-                    warn!("Failed to find entry point! Falling back to \"Main\".");
-                    match find_in_dir(&p, "main").or(find_in_dir(&p, "Main")) {
-                        Some(s) => s,
-                        None => {
-                            error!("Failed to find main!");
-                            if p.read_dir().unwrap().into_iter().count() > 1 {
-                                error!("There are too many files! Failed to determine which one to use!");
-                                return None;
-                            } else {
-                                warn!("Will run any file inside target directory.");
-                                p.read_dir()
-                                    .unwrap()
-                                    .into_iter()
-                                    .next()
-                                    .unwrap()
-                                    .ok()
-                                    .map(|el| el.path())
-                                    .unwrap()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    let entry = match find_in_dir(&p, &CONFIG.entry)
+        .or(find_in_dir(&p, &CONFIG.entry.clone().to_lowercase()))
+    {
+        Some(s) => s,
         None => {
-            warn!("User provided no entry point! Falling back to \"Main\".");
-            match find_in_dir(&p, "main") {
+            warn!("Failed to find entry point! Falling back to \"Main\".");
+            match find_in_dir(&p, "main").or(find_in_dir(&p, "Main")) {
                 Some(s) => s,
                 None => {
                     error!("Failed to find main!");
