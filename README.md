@@ -6,9 +6,15 @@ This is a tester program for AP computer science. It is a WIP.
 
 ### Setup
 
+#### For CLI
+
 Navigate to your directory with cd
 run `apcs_tester init`
 edit the configuration files
+
+#### For GUI
+
+Just run the program, and configure options through the GUI.
 
 ### Configuration
 
