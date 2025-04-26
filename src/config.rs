@@ -9,7 +9,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+#[cfg(not(feature = "gui"))]
 use std::fs::File;
+#[cfg(not(feature = "gui"))]
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
@@ -342,6 +344,26 @@ impl Args {
     }
 }
 
+impl Default for Args {
+    fn default() -> Self {
+        Args {
+            command: Command::Run {
+                test: None,
+                verbose: false,
+                debug: false,
+                trace: false,
+                quiet: false,
+                silent: false,
+                log_level: None,
+                config: None,
+                output: Some(PathBuf::from_str("/tmp/output.toml").unwrap()),
+                dry_run: false,
+                artifacts: false,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SimpleOpts {
     pub mode: CommandType,
@@ -371,14 +393,14 @@ pub struct SimpleOpts {
 impl SimpleOpts {
     pub fn new() -> Self {
         debug!("converting ARGS into SimpleOpts: {:?}", ARGS);
-        (*ARGS).clone().into()
+        return (*ARGS).clone().into();
     }
 }
 
 impl Default for SimpleOpts {
     fn default() -> Self {
         SimpleOpts {
-            mode: CommandType::Init,
+            mode: CommandType::Run,
             test: None,
             verbose: false,
             debug: false,
@@ -388,7 +410,7 @@ impl Default for SimpleOpts {
             log_level: None,
             config: env::current_dir()
                 .unwrap()
-                .join(PathBuf::from_str("tests.toml").unwrap()),
+                .join(PathBuf::from_str("config.toml").unwrap()),
             output: None,
             dry_run: true,
             artifacts: false,
@@ -437,8 +459,8 @@ impl From<Args> for SimpleOpts {
                         let toml: Option<PathBuf> = None;
                         for i in env::current_dir().unwrap().read_dir().unwrap() {
                             let res = i.unwrap();
-                            if res.path().extension().unwrap().to_str().unwrap() == "toml" {
-                                if toml.is_some() {
+                            if let Some(s) = res.path().extension() {
+                                if s == "toml" && toml.is_some() {
                                     error!(
                                         "apcs-tester found two tomls! Specify which one to use!"
                                     );
@@ -477,9 +499,14 @@ impl From<Args> for SimpleOpts {
         return ret;
     }
 }
-
+#[cfg(not(feature = "gui"))]
 pub static ARGS: Lazy<Args> = Lazy::new(Args::parse);
+#[cfg(feature = "gui")]
+pub static ARGS: Lazy<Args> = Lazy::new(Args::default);
+#[cfg(not(feature = "gui"))]
 pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::new);
+#[cfg(feature = "gui")]
+pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::default);
 
 pub fn proc_args() {
     match &ARGS.command {

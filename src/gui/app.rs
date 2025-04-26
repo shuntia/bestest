@@ -55,6 +55,7 @@ pub async fn launch() {
             error!("launch has already been called! CONFIG has already been set!");
         }
     });
+    let _ = mw.run();
 }
 
 pub async fn wait_for_config() -> &'static ConfigParams {

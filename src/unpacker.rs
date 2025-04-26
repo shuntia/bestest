@@ -1,5 +1,5 @@
 use crate::config::Orderby;
-use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR};
+use crate::config::{CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR, generate_regex};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, warn};
 use std::fs::{self, File};
@@ -83,7 +83,11 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
     }
     let mut ret = vec![];
     for i in handles {
-        ret.push(i.await.unwrap());
+        if let Ok(p) = i.await {
+            ret.push(p);
+        } else {
+            continue;
+        }
         match ret.get(ret.len() - 1).unwrap() {
             Ok(p) => {
                 debug!(
@@ -125,6 +129,7 @@ async fn unpack_semaphore(p: PathBuf, s: Arc<Semaphore>) -> Result<PathBuf, Unpa
 pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     if p.is_dir() {
         warn!("Unpacker does not know what to do with unpacked directory! Leaving it untouched!");
+        return Err(UnpackError::Ignore);
     }
     if p.is_file() && !KNOWN_EXTENSIONS.contains(&p.extension().unwrap().to_str().unwrap()) {
         debug!("Ignoring unknown file.");

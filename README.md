@@ -30,7 +30,7 @@ threads: Number of concurrent threads for compilation + execution
 
 checker: AST or static checker. AST checker is unlikely to be implemented.
 
-allow: Allowed dangerous program actions 
+allow: Allowed dangerous program actions
 
 format: File format of test cases(i.e. name, id, extension, num, alpha, alnum)
 
@@ -39,6 +39,30 @@ orderby: Order output by Name/Id
 dependencies: Files to be moved into the root of the virtual environment
 
 entry: entry point for the program(unnecessary for some languages, but currently required.)
+
+### Allow options
+
+FileIO: File I/O access
+SysAccess: Access to libraries like `sys`
+Runtime: Access to `Runtime` object
+Threading: running multiple threads
+Reflection: Reflecting classes
+ProcessExec: Execute external programs
+SystemCall: Invoke raw syscalls
+Network: Networking access
+Assembly: Inline assembly like `asm!()` for rust
+Signal: Sending arbitrary signals to external processes
+Process: Java's `ProcessBuilder`
+Unsafe: `unsafe` in rust
+FFI: Access to FFI
+Command: Access to execute commands interpreted by `sh` or `cmd`
+OsAccess: Access to OS-specific functions in python like `os.system()`
+Eval: Use of python `eval`
+Exec: Use of python `exec`
+Import: Use of external libraries
+Ctypes: Use of C types via FFI-like interfaces
+Pickle: Use of pickles in python
+All: Allow all
 
 
 ### Command-line options
@@ -65,6 +89,27 @@ entry: entry point for the program(unnecessary for some languages, but currently
 
   -h, --help                   Print help
 
+## Building
+
+for CLI
+
+```bash
+git clone https://github.com/shuntia/apcs-tester
+cd apcs-tester
+cargo build -r
+```
+
+for GUI
+```bash
+git clone https://github.com/shuntia/apcs-tester
+cd apcs-tester
+cargo build -r --features gui
+```
+
+the binary is in `target/release`
+
+> [!NOTE]
+> This program does not currently work under windows because it relies on signal sending provided by `nix`
 
 ### Contribution
 

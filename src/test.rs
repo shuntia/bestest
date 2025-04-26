@@ -27,6 +27,7 @@ impl std::fmt::Display for TestCase {
 }
 
 impl TestCase {
+    #[allow(unused)]
     fn diff<'a>(
         &'a self,
         s: &'a str,

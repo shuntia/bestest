@@ -10,26 +10,22 @@ use std::{
     process::exit,
 };
 use tokio::{
-    fs::{remove_dir_all, File},
+    fs::{File, remove_dir_all},
     io::AsyncWriteExt,
 };
 pub mod checker;
 pub mod config;
 pub mod executable;
+#[cfg(feature = "gui")]
 pub mod gui;
 pub mod lang;
 pub mod test;
 pub mod unpacker;
-use checker::{check_dirs, IllegalExpr};
+use checker::{IllegalExpr, check_dirs};
 use config::*;
 
 #[tokio::main]
 async fn main() {
-    #[cfg(feature = "gui")]
-    {
-        tokio::spawn(gui::init().await);
-        gui::app::wait_for_config().await;
-    }
     let args = &config::SIMPLEOPTS;
     let logger = env_logger::builder()
         .filter_level(match args {
@@ -50,6 +46,11 @@ async fn main() {
     debug!("logger started!");
     proc_args();
     info!("Welcome to the APCS Homework tester!");
+    #[cfg(feature = "gui")]
+    {
+        tokio::spawn(gui::init());
+        gui::app::wait_for_config().await;
+    }
     match &args.mode {
         CommandType::Init => {
             info!("creating bare config file...");
@@ -97,7 +98,9 @@ async fn main() {
             warn!("{:?}", i);
         }
         warn!("Aborting check for those files.");
-        info!("NOTE: if you want to allow potentially dangerous operations, configure it in config.json.");
+        info!(
+            "NOTE: if you want to allow potentially dangerous operations, configure it in config.toml."
+        );
     }
     // get the executables and remove dangerous files.
     let mut exec: HashSet<PathBuf> = TEMPDIR
@@ -115,7 +118,9 @@ async fn main() {
     info!("Starting tests...");
     debug!("Target dirs: {:?}", exec);
     if exec.is_empty() {
-        error!("None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file.");
+        error!(
+            "None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file."
+        );
         exit(0);
     }
     let res = test::test_dirs(exec).await;
@@ -142,7 +147,13 @@ async fn main() {
             println!("{}: {}", i.0, i.1);
         }
     }
+    #[cfg(not(feature = "gui"))]
     if !SIMPLEOPTS.artifacts {
+        debug!("cleaning up...");
+        remove_dir_all(TEMPDIR.clone()).await.unwrap();
+    }
+    #[cfg(feature = "gui")]
+    {
         debug!("cleaning up...");
         remove_dir_all(TEMPDIR.clone()).await.unwrap();
     }
