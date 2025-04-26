@@ -1,11 +1,11 @@
-use crate::config::{self, SPINNER};
+use crate::config;
 use crate::config::{CONFIG, MULTIPROG};
 use crate::executable::Language;
 use crate::lang::runner::{self, RunError, Runner};
 use console::style;
 use imara_diff::{diff, intern::InternedInput, Algorithm};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{ops::Range, path::PathBuf, time::Duration};
@@ -61,8 +61,6 @@ impl TestCase {
     }
 }
 
-const CHEAT_ENABLED: [&'static str; 2] = ["kartik", "shunta"];
-
 #[derive(Debug, Clone)]
 pub enum TestResult {
     Correct {
@@ -87,7 +85,7 @@ impl TestResult {
     }
     pub fn get_loc(&self) -> Option<&Vec<WrongLine<usize>>> {
         match &self {
-            Self::Wrong { case, loc } => Some(loc),
+            Self::Wrong { case: _, loc } => Some(loc),
             _ => None,
         }
     }
@@ -100,6 +98,7 @@ impl TestResult {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct WrongLine<T> {
     before: Range<T>,

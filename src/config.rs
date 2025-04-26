@@ -23,6 +23,7 @@ use tokio::sync::Mutex;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 fn load_config() -> Config {
+    #[cfg(not(feature = "gui"))]
     let cp: ConfigParams =
         match ARGS.get_config().unwrap() {
             s if s.extension().expect(
@@ -46,6 +47,8 @@ fn load_config() -> Config {
                 panic!("File extension not found! Config format guessing is not implemented yet!");
             }
         };
+    #[cfg(feature = "gui")]
+    let cp = crate::gui::app::get_config();
     if cp.entry == None {
         error!("User did not specify entry point! Falling back to\"Main\".")
     }
@@ -167,21 +170,21 @@ pub static CONFIG: Lazy<Config> = Lazy::new(load_config);
 
 #[derive(Serialize, Deserialize)]
 pub struct ConfigParams {
-    entry: Option<String>,
-    lang: Option<String>,
-    args: Option<Vec<String>>,
-    target: Option<PathBuf>,
-    input: Option<Vec<String>>,
-    output: Option<Vec<String>>,
-    points: Option<Vec<u64>>,
-    timeout: Option<u64>,
-    memory: Option<u64>,
-    threads: Option<u64>,
-    checker: Option<Type>,
-    allow: Option<Vec<String>>,
-    format: Option<String>,
-    orderby: Option<Orderby>,
-    dependencies: Option<Vec<PathBuf>>,
+    pub entry: Option<String>,
+    pub lang: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub target: Option<PathBuf>,
+    pub input: Option<Vec<String>>,
+    pub output: Option<Vec<String>>,
+    pub points: Option<Vec<u64>>,
+    pub timeout: Option<u64>,
+    pub memory: Option<u64>,
+    pub threads: Option<u64>,
+    pub checker: Option<Type>,
+    pub allow: Option<Vec<String>>,
+    pub format: Option<String>,
+    pub orderby: Option<Orderby>,
+    pub dependencies: Option<Vec<PathBuf>>,
 }
 
 impl Default for ConfigParams {

@@ -6,7 +6,6 @@ use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
     path::PathBuf,
     process::exit,
 };
@@ -17,6 +16,7 @@ use tokio::{
 pub mod checker;
 pub mod config;
 pub mod executable;
+pub mod gui;
 pub mod lang;
 pub mod test;
 pub mod unpacker;
@@ -25,6 +25,11 @@ use config::*;
 
 #[tokio::main]
 async fn main() {
+    #[cfg(feature = "gui")]
+    {
+        tokio::spawn(gui::init().await);
+        gui::app::wait_for_config().await;
+    }
     let args = &config::SIMPLEOPTS;
     let logger = env_logger::builder()
         .filter_level(match args {

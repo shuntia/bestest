@@ -1,0 +1,257 @@
+/*
+pub struct ConfigParams {
+    entry: Option<String>,
+    lang: Option<String>,
+    args: Option<Vec<String>>,
+    target: Option<PathBuf>,
+    input: Option<Vec<String>>,
+    output: Option<Vec<String>>,
+    points: Option<Vec<u64>>,
+    timeout: Option<u64>,
+    memory: Option<u64>,
+    threads: Option<u64>,
+    checker: Option<Type>,
+    allow: Option<Vec<String>>,
+    format: Option<String>,
+    orderby: Option<Orderby>,
+    dependencies: Option<Vec<PathBuf>>,
+}
+ * */
+
+import { VerticalBox, HorizontalBox, LineEdit, Button, ScrollView } from "std-widgets.slint";
+export component MainWindow inherits Window {
+    title: "TESTER GUI";
+    width: 400px;
+    height: 400px;
+    callback submit(values: [string]);
+    in-out property <string> err: "";
+    in-out property <string> entry: "main";
+    in-out property <string> lang: "Guess";
+    in-out property <string> args: "[]";
+    in-out property <string> target: "";
+    in-out property <string> input: "";
+    in-out property <string> output: "";
+    in-out property <string> points: "";
+    in-out property <string> timeout: "1000";
+    in-out property <string> memory: "1000";
+    in-out property <string> threads: "4";
+    in-out property <string> checker: "Static";
+    in-out property <string> allow: "[]";
+    in-out property <string> format: "[]";
+    in-out property <string> orderby: "[]";
+    in-out property <string> dependencies: "[]";
+
+    in-out property <bool> configuring: true;
+
+    ScrollView {
+        VerticalLayout {
+            if(configuring): VerticalLayout {
+                spacing: 10px;
+                padding: 20px;
+
+                Text {
+                    text: "Entry point(file name without extension):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: entry;
+                    }
+                }
+
+                Text {
+                    text: "Language:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: lang;
+                    }
+                }
+
+                Text {
+                    text: "args(in list format):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: args;
+                    }
+                }
+
+                Text {
+                    text: "target(directory with zip files):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: target;
+                    }
+                }
+
+                Text {
+                    text: "For input/output, use \"\\n\" for new line.";
+                }
+
+                Text {
+                    text: "input:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: input;
+                    }
+                }
+
+                Text {
+                    text: "expected output:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: output;
+                    }
+                }
+
+                Text {
+                    text: "points(per problem):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: points;
+                    }
+                }
+
+                Text {
+                    text: "timeout(ms):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: timeout;
+                    }
+                }
+
+                Text {
+                    text: "memory(MB if supported):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: memory;
+                    }
+                }
+
+                Text {
+                    text: "threads:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: threads;
+                    }
+                }
+
+                Text {
+                    text: "checker[Static/AST]:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: checker;
+                    }
+                }
+
+                Text {
+                    text: "allow(look at README.):";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: allow;
+                    }
+                }
+
+                Text {
+                    text: "output format[txt/json/toml]:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: format;
+                    }
+                }
+
+                Text {
+                    text: "order by[Id/Name]:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: orderby;
+                    }
+                }
+
+                Text {
+                    text: "dependencies:";
+                }
+
+                HorizontalBox {
+                    spacing: 5px;
+                    LineEdit {
+                        text: dependencies;
+                    }
+                }
+
+                Button {
+                    text: "Start";
+                    clicked => {
+                        configuring = false;
+                        root.submit([
+                            entry,
+                            lang,
+                            args,
+                            target,
+                            input,
+                            output,
+                            points,
+                            timeout,
+                            memory,
+                            threads,
+                            checker,
+                            allow,
+                            format,
+                            orderby,
+                            dependencies
+                        ]);
+                    }
+                }
+            }
+
+            if(!configuring):Text {
+                text: root.output;
+                horizontal-alignment: left;
+                vertical-alignment: top;
+                height: 150px;
+                font-size: 12px;
+                color: #444;
+                padding: 6px;
+            }
+        }
+    }
+}

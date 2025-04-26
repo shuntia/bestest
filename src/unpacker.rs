@@ -1,7 +1,7 @@
 use crate::config::Orderby;
 use crate::config::{generate_regex, CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR};
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;

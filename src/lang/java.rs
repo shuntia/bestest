@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use log::{debug, warn};
 use nix::sys::signal::{kill, Signal};
 use std::{
-    io::{Read, Write},
     path::PathBuf,
     process::{ExitStatus, Stdio},
     sync::OnceLock,
@@ -72,7 +71,7 @@ impl Runner for JavaRunner {
                         Ok(())
                     } else {
                         let mut r = String::new();
-                        compiler.stderr.unwrap().read_to_string(&mut r).await;
+                        let _ = compiler.stderr.unwrap().read_to_string(&mut r).await;
                         Err(RunError::CE(Some(s.code().unwrap()), r))
                     }
                 }

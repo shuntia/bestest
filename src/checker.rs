@@ -77,7 +77,7 @@ pub async fn changefile_prog(
     entry: PathBuf,
     errors: Arc<tokio::sync::Mutex<Vec<(PathBuf, String)>>>,
     op: Arc<tokio::sync::Mutex<ProgressBar>>,
-    mp: Arc<MultiProgress>,
+    _mp: Arc<MultiProgress>,
 ) {
     //let prog = mp
     //    .add(ProgressBar::new_spinner())
@@ -178,7 +178,7 @@ pub struct IllegalExpr {
 pub mod static_check {
     use std::{collections::HashSet, fs::File, io::Read, path::PathBuf};
 
-    use log::{debug, warn};
+    use log::warn;
     use strum::IntoEnumIterator;
     use strum_macros::{AsRefStr, EnumIter};
 
