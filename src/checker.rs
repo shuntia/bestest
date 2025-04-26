@@ -346,7 +346,7 @@ pub mod static_check {
                 },
 
                 Language::Rust => match &self {
-                    Self::Unsafe => vec!["unsafe", "raw pointer"],
+                    Self::Unsafe => vec!["unsafe"],
                     Self::FileIO => vec!["std::fs::File", "std::io"],
                     Self::Network => vec!["std::net", "TcpStream", "UdpSocket"],
                     Self::Threading => vec!["std::thread"],
