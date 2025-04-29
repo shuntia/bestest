@@ -1,3 +1,8 @@
+#![deny(clippy::all)]
+#![deny(clippy::pedantic)]
+#![deny(clippy::nursery)]
+#![deny(clippy::cargo)]
+#![deny(clippy::restriction)]
 use console::style;
 use env_logger;
 use indicatif_log_bridge::LogWrapper;

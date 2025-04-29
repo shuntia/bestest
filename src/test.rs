@@ -3,7 +3,7 @@ use crate::config::{CONFIG, MULTIPROG};
 use crate::executable::Language;
 use crate::lang::runner::{self, RunError, Runner};
 use console::style;
-use imara_diff::{diff, intern::InternedInput, Algorithm};
+use imara_diff::{Algorithm, diff, intern::InternedInput};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
