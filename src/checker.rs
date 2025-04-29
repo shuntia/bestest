@@ -1,5 +1,5 @@
 use indicatif::{MultiProgress, ProgressBar};
-use log::*;
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
@@ -7,25 +7,27 @@ use tokio::{
     task,
 };
 
+use anyhow::{Ok, Result};
 use walkdir::WalkDir;
 
-use crate::config::{self};
+use crate::config;
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Type {
     AST,
     Static,
 }
 
-pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
+pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>> {
     crate::config::get_config()?;
     let results = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-    let max_threads = config::get_config().unwrap().threads;
-    let semaphore = Arc::new(Semaphore::new(max_threads as usize));
+    let max_threads = config::get_config()?.threads;
+    let semaphore = Arc::new(Semaphore::new(usize::try_from(max_threads)?));
     let errors = Arc::new(tokio::sync::Mutex::new(Vec::<(PathBuf, String)>::new()));
 
     // Wrap MultiProgress in an Arc so it can be shared between tasks.
     let mp = Arc::new(MultiProgress::new());
-    mp.clear().unwrap();
+    mp.clear()?;
 
     // Collect entries first
     let mut entries = vec![];
@@ -33,14 +35,17 @@ pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<Ille
         for entry in WalkDir::new(path)
             .into_iter()
             .filter(|el| {
-                config::KNOWN_EXTENSIONS.contains(match el.as_ref().unwrap().path().extension() {
-                    Some(s) => s.to_str().unwrap(),
-                    None => "java",
-                })
+                config::KNOWN_EXTENSIONS.contains(
+                    el.as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .map_or("java", |s| s.to_str().unwrap()),
+                )
             })
-            .filter(|el| el.as_ref().unwrap().path().is_file())
+            .filter(|el| return el.as_ref().unwrap().path().is_file())
         {
-            entries.push(entry.unwrap().into_path());
+            entries.push(entry?.into_path());
         }
     }
 
@@ -51,23 +56,30 @@ pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<Ille
     let mut handles = vec![];
 
     for entry in entries {
-        let results = results.clone();
-        let semaphore = semaphore.clone();
-        let errors = errors.clone();
-        let op = op.clone();
-        let mp = mp.clone();
+        let results = Arc::<
+            tokio::sync::Mutex<
+                std::collections::HashMap<std::path::PathBuf, std::vec::Vec<IllegalExpr>>,
+            >,
+        >::clone(&results);
+        let semaphore = Arc::<tokio::sync::Semaphore>::clone(&semaphore);
+        let errors = Arc::<
+            tokio::sync::Mutex<std::vec::Vec<(std::path::PathBuf, std::string::String)>>,
+        >::clone(&errors);
+        let op = Arc::<tokio::sync::Mutex<indicatif::ProgressBar>>::clone(&op);
+        let mp = Arc::<indicatif::MultiProgress>::clone(&mp);
         let handle = tokio::spawn(changefile_prog(results, semaphore, entry, errors, op, mp));
         handles.push(handle);
     }
     op.lock().await.finish_and_clear();
     for h in handles {
-        h.await.unwrap();
+        h.await?;
     }
-    for e in errors.lock().await.clone() {
+    let value = errors.lock().await.clone();
+    for e in value {
         error!("{} at {:?}", e.1, e.0);
     }
-    mp.clear().unwrap();
-    let ret = std::mem::take(&mut *results.lock().await);
+    mp.clear()?;
+    let ret = core::mem::take(&mut *results.lock().await);
     Ok(ret)
 }
 
@@ -81,11 +93,11 @@ pub async fn changefile_prog(
 ) {
     //let prog = mp
     //    .add(ProgressBar::new_spinner())
-    //    .with_message(entry.file_name().unwrap().to_str().unwrap().to_owned());
+    //    .with_message(entry.file_name()?.to_str()?.to_owned());
     //prog.set_style(
     //    ProgressStyle::default_spinner()
     //        .template("{spinner} checking {msg}")
-    //        .unwrap(),
+    //        ?,
     //);
     //prog.enable_steady_tick(Duration::from_millis(50));
     let _ = changefile(results, semaphore, entry, errors).await;
@@ -93,9 +105,7 @@ pub async fn changefile_prog(
     op.lock().await.inc(1);
 }
 
-pub async fn check_dir(
-    path: std::path::PathBuf,
-) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>, String> {
+pub async fn check_dir(path: std::path::PathBuf) -> Result<HashMap<PathBuf, Vec<IllegalExpr>>> {
     crate::config::get_config()?;
     if path.is_file() {
         let mut ret = HashMap::new();
@@ -104,34 +114,57 @@ pub async fn check_dir(
     }
     let results: Arc<Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let max_threads = config::get_config().unwrap().threads;
-    let semaphore = Arc::new(Semaphore::new(max_threads as usize));
+    let max_threads = config::get_config()?.threads;
+    let semaphore = Arc::new(Semaphore::new(usize::try_from(max_threads)?));
     let mut handles = vec![];
     let errors = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
     for entry in WalkDir::new(path).into_iter().filter(|el| {
-        config::KNOWN_EXTENSIONS.contains(match &el.as_ref().unwrap().clone().path().extension() {
-            Some(s) => s.to_str().unwrap(),
-            None => {
-                warn!("failed to read extension! checking anyway.");
-                "java"
-            }
-        })
+        config::KNOWN_EXTENSIONS.contains(
+            el.as_ref()
+                .unwrap()
+                .clone()
+                .path()
+                .extension()
+                .as_ref()
+                .map_or_else(
+                    || {
+                        warn!("failed to read extension! checking anyway.");
+                        "java"
+                    },
+                    |s| s.to_str().unwrap(),
+                ),
+        )
     }) {
-        let handle = task::spawn(changefile(
-            results.clone(),
-            semaphore.clone(),
-            entry.unwrap().into_path(),
-            errors.clone(),
-        ));
+        let handle =
+            task::spawn(
+                changefile(
+                    Arc::<
+                        tokio::sync::Mutex<
+                            std::collections::HashMap<
+                                std::path::PathBuf,
+                                std::vec::Vec<IllegalExpr>,
+                            >,
+                        >,
+                    >::clone(&results),
+                    Arc::<tokio::sync::Semaphore>::clone(&semaphore),
+                    entry?.into_path(),
+                    Arc::<
+                        tokio::sync::Mutex<
+                            std::vec::Vec<(std::path::PathBuf, std::string::String)>,
+                        >,
+                    >::clone(&errors),
+                ),
+            );
         handles.push(handle);
     }
     for h in handles {
-        h.await.unwrap();
+        h.await??;
     }
-    for e in errors.lock().await.clone() {
+    let value = errors.lock().await.clone();
+    for e in value {
         error!("{} at {:?}", e.1, e.0);
     }
-    let ret = std::mem::take(&mut *results.lock().await);
+    let ret = core::mem::take(&mut *results.lock().await);
     Ok(ret)
 }
 async fn changefile(
@@ -139,35 +172,37 @@ async fn changefile(
     semaphore: Arc<Semaphore>,
     dir: PathBuf,
     errs: Arc<Mutex<Vec<(PathBuf, String)>>>,
-) {
-    let permit = semaphore.acquire().await.unwrap();
+) -> Result<()> {
+    let permit = semaphore.acquire().await?;
     results.lock().await.insert(
         dir.clone(),
         match check_file(dir.clone()).await {
             Err(e) => {
                 error!("ERROR");
-                errs.lock().await.push((dir.clone(), e));
-                return;
+                errs.lock().await.push((dir.clone(), e.to_string()));
+                return Ok(());
             }
-            Ok(o) => o,
+            Result::Ok(o) => o,
         },
     );
     drop(permit);
+    Ok(())
 }
 
-pub async fn check_file(path: std::path::PathBuf) -> Result<Vec<IllegalExpr>, String> {
-    debug!("checking {:?}", path);
+pub async fn check_file(path: std::path::PathBuf) -> Result<Vec<IllegalExpr>> {
+    debug!("checking {path:?}");
     let cfg = crate::config::get_config()?;
     match cfg.checker {
         Type::AST => {
             warn!("AST checker is not supported yet. falling back to static analysis.");
-            return static_check::check(path);
+            static_check::check(&path)
         }
-        Type::Static => return static_check::check(path),
+        Type::Static => static_check::check(&path),
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct IllegalExpr {
     pub content: Option<String>,
     pub violates: Option<static_check::Allow>,
@@ -176,21 +211,22 @@ pub struct IllegalExpr {
 }
 
 pub mod static_check {
-    use std::{collections::HashSet, fs::File, io::Read, path::PathBuf};
+    use std::{collections::HashSet, fs::File, io::Read as _, path::PathBuf};
 
+    use anyhow::Result;
     use log::warn;
-    use strum::IntoEnumIterator;
+    use strum::IntoEnumIterator as _;
     use strum_macros::{AsRefStr, EnumIter};
 
     use crate::executable::Language;
 
     use super::IllegalExpr;
-    pub fn check(path: PathBuf) -> Result<Vec<IllegalExpr>, String> {
-        let allowcfg = crate::config::get_config().unwrap().allow.clone();
+    pub fn check(path: &PathBuf) -> Result<Vec<IllegalExpr>> {
+        let allowcfg = crate::config::get_config()?.allow.clone();
         let lang: Language = path.extension().unwrap().to_str().unwrap().into();
         let mut allowed = HashSet::new();
         for i in allowcfg {
-            allowed.insert(match Allow::from_str(i.as_str()).get(0) {
+            allowed.insert(match Allow::from_str(i.as_str()).first() {
                 Some(s) => s.clone(),
                 None => {
                     warn!("potentially illegal config!");
@@ -198,29 +234,27 @@ pub mod static_check {
                 }
             });
         }
-        let prohibited: Vec<Allow> = Allow::iter().filter(|el| !allowed.contains(el)).collect();
+        let prohibited: Vec<Allow> = Allow::iter()
+            .filter(|el| return !allowed.contains(el))
+            .collect();
         let mut prohibited_str: Vec<(Allow, &str)> = Vec::new();
         for i in &prohibited {
-            for j in i.get_prohibited(lang.clone()) {
+            for j in i.get_prohibited(&lang.clone()) {
                 prohibited_str.push((i.clone(), j));
             }
         }
-        let mut f = match File::open(&path) {
-            Ok(f) => Ok(f),
-            Err(e) => Err(e.to_string()),
-        }?;
+        let mut f = File::open(&path)?;
         let mut s: String = String::new();
         let _ = f.read_to_string(&mut s);
         let mut illegal: Vec<(usize, Allow)> = vec![];
         for i in prohibited_str {
-            match s.find(i.1) {
-                Some(s) => illegal.push((s, i.0.clone())),
-                None => {}
+            if let Some(s) = s.find(i.1) {
+                illegal.push((s, i.0.clone()))
             }
         }
         let mut ret = vec![];
         let mut indents: Vec<usize> = vec![];
-        for i in s.split("\n") {
+        for i in s.split('\n') {
             indents.push(i.len());
         }
         for i in illegal {
@@ -234,9 +268,9 @@ pub mod static_check {
                 content: None,
                 path: path.clone(),
                 violates: Some(i.1),
-            })
+            });
         }
-        return Ok(ret);
+        Ok(ret)
     }
 
     pub trait Prohibit {
@@ -266,6 +300,7 @@ pub mod static_check {
     */
 
     #[derive(PartialEq, Eq, Hash, Debug, Clone, EnumIter, AsRefStr)]
+    #[non_exhaustive]
     pub enum Allow {
         FileIO,
         SysAccess,
@@ -293,165 +328,246 @@ pub mod static_check {
     impl Allow {
         fn from_str(s: &str) -> Vec<Self> {
             let mut ret = vec![];
-            for i in Allow::iter() {
+            for i in Self::iter() {
                 if s.contains(i.as_ref()) {
                     ret.push(i);
                 }
             }
-            ret
+            return ret;
         }
-        fn get_prohibited(&self, lang: Language) -> Vec<&'static str> {
+        fn get_prohibited(&self, lang: &Language) -> Vec<&'static str> {
             match lang {
-                Language::Guess => {
-                    vec![]
-                }
-                Language::Unknown(_) => {
-                    vec![]
-                }
+                Language::Unknown(_) | Language::Guess => return vec![],
                 Language::C => match &self {
-                    Self::SystemCall => vec![
-                        "fork", "exec", "system", "popen", "vfork", "execl", "execlp", "execle",
-                        "execv", "execvp", "execve",
-                    ],
-                    Self::FileIO => vec!["fopen", "fread", "fwrite", "fclose"],
-                    Self::Network => vec!["socket", "bind", "connect", "recv", "send"],
-                    Self::Assembly => vec!["asm", "__asm__"],
-                    Self::Signal => vec!["signal", "raise"],
-                    Self::Process => vec!["wait", "waitpid"],
-                    Self::All => vec![
-                        "fork", "exec", "system", "popen", "vfork", "execl", "execlp", "execle",
-                        "execv", "execvp", "execve", "fopen", "fread", "fwrite", "fclose",
-                        "socket", "bind", "connect", "recv", "send", "asm", "__asm__", "signal",
-                        "raise", "wait", "waitpid",
-                    ],
-                    _ => vec![],
+                    Self::SystemCall => {
+                        return vec![
+                            "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
+                            "execle", "execv", "execvp", "execve",
+                        ];
+                    }
+                    Self::FileIO => return vec!["fopen", "fread", "fwrite", "fclose"],
+                    Self::Network => return vec!["socket", "bind", "connect", "recv", "send"],
+                    Self::Assembly => return vec!["asm", "__asm__"],
+                    Self::Signal => return vec!["signal", "raise"],
+                    Self::Process => return vec!["wait", "waitpid"],
+                    Self::All => {
+                        return vec![
+                            "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
+                            "execle", "execv", "execvp", "execve", "fopen", "fread", "fwrite",
+                            "fclose", "socket", "bind", "connect", "recv", "send", "asm",
+                            "__asm__", "signal", "raise", "wait", "waitpid",
+                        ];
+                    }
+                    Self::SysAccess
+                    | Self::Runtime
+                    | Self::Threading
+                    | Self::Reflection
+                    | Self::ProcessExec
+                    | Self::Unsafe
+                    | Self::FFI
+                    | Self::Command
+                    | Self::OsAccess
+                    | Self::Eval
+                    | Self::Exec
+                    | Self::Import
+                    | Self::Ctypes
+                    | Self::Pickle
+                    | Self::Unknown => return vec![],
                 },
                 Language::Cpp => match &self {
-                    Self::SystemCall => vec![
-                        "fork", "exec", "system", "popen", "vfork", "execl", "execlp", "execle",
-                        "execv", "execvp", "execve",
-                    ],
-                    Self::FileIO => vec!["fopen", "fread", "fwrite", "fclose"],
-                    Self::Network => vec!["socket", "bind", "connect", "recv", "send"],
-                    Self::Assembly => vec!["asm", "__asm__"],
-                    Self::Signal => vec!["signal", "raise"],
-                    Self::Process => vec!["wait", "waitpid"],
-                    Self::All => vec![
-                        "fork", "exec", "system", "popen", "vfork", "execl", "execlp", "execle",
-                        "execv", "execvp", "execve", "fopen", "fread", "fwrite", "fclose",
-                        "socket", "bind", "connect", "recv", "send", "asm", "__asm__", "signal",
-                        "raise", "wait", "waitpid",
-                    ],
-                    _ => vec![],
+                    Self::SystemCall => {
+                        return vec![
+                            "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
+                            "execle", "execv", "execvp", "execve",
+                        ];
+                    }
+                    Self::FileIO => return vec!["fopen", "fread", "fwrite", "fclose"],
+                    Self::Network => return vec!["socket", "bind", "connect", "recv", "send"],
+                    Self::Assembly => return vec!["asm", "__asm__"],
+                    Self::Signal => return vec!["signal", "raise"],
+                    Self::Process => return vec!["wait", "waitpid"],
+                    Self::All => {
+                        return vec![
+                            "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
+                            "execle", "execv", "execvp", "execve", "fopen", "fread", "fwrite",
+                            "fclose", "socket", "bind", "connect", "recv", "send", "asm",
+                            "__asm__", "signal", "raise", "wait", "waitpid",
+                        ];
+                    }
+                    Self::SysAccess
+                    | Self::Runtime
+                    | Self::Threading
+                    | Self::Reflection
+                    | Self::ProcessExec
+                    | Self::Unsafe
+                    | Self::FFI
+                    | Self::Command
+                    | Self::OsAccess
+                    | Self::Eval
+                    | Self::Exec
+                    | Self::Import
+                    | Self::Ctypes
+                    | Self::Pickle
+                    | Self::Unknown => return vec![],
                 },
 
                 Language::Rust => match &self {
-                    Self::Unsafe => vec!["unsafe"],
-                    Self::FileIO => vec!["std::fs::File", "std::io"],
-                    Self::Network => vec!["std::net", "TcpStream", "UdpSocket"],
-                    Self::Threading => vec!["std::thread"],
-                    Self::FFI => vec!["extern", "libc", "std::os::unix::process::Command"],
-                    Self::Command => vec!["std::process::Command"],
-                    Self::Reflection => vec!["reflect"],
-                    Self::All => vec![
-                        "unsafe",
-                        "std::fs::File",
-                        "std::io",
-                        "std::net",
-                        "TcpStream",
-                        "UdpSocket",
-                        "std::thread",
-                        "extern",
-                        "libc",
-                        "std::os::unix::process::Command",
-                        "std::process::Command",
-                        "reflection",
-                    ],
-                    _ => vec![],
+                    Self::Unsafe => return vec!["unsafe"],
+                    Self::FileIO => return vec!["std::fs::File", "std::io"],
+                    Self::Network => return vec!["std::net", "TcpStream", "UdpSocket"],
+                    Self::Threading => return vec!["std::thread"],
+                    Self::FFI => return vec!["extern", "libc", "std::os::unix::process::Command"],
+                    Self::Command => return vec!["std::process::Command"],
+                    Self::Reflection => return vec!["reflect"],
+                    Self::All => {
+                        return vec![
+                            "unsafe",
+                            "std::fs::File",
+                            "std::io",
+                            "std::net",
+                            "TcpStream",
+                            "UdpSocket",
+                            "std::thread",
+                            "extern",
+                            "libc",
+                            "std::os::unix::process::Command",
+                            "std::process::Command",
+                            "reflection",
+                        ];
+                    }
+                    Self::SysAccess
+                    | Self::Runtime
+                    | Self::ProcessExec
+                    | Self::SystemCall
+                    | Self::Assembly
+                    | Self::Signal
+                    | Self::Process
+                    | Self::OsAccess
+                    | Self::Eval
+                    | Self::Exec
+                    | Self::Import
+                    | Self::Ctypes
+                    | Self::Pickle
+                    | Self::Unknown => return vec![],
                 },
                 Language::Python => match &self {
-                    Self::OsAccess => vec!["os.system", "os.popen"],
-                    Self::Eval => vec!["eval("],
-                    Self::Exec => vec!["exec("],
-                    Self::FileIO => vec!["open("],
-                    Self::Threading => vec!["threading.Thread"],
-                    Self::Network => vec!["socket", "requests.get", "urllib", "subprocess"],
-                    Self::Import => vec!["__import__"],
-                    Self::Ctypes => vec!["ctypes"],
-                    Self::Pickle => vec!["pickle.loads", "pickle.dumps"],
-                    Self::All => vec![
-                        "os.system",
-                        "os.popen",
-                        "eval(",
-                        "exec(",
-                        "open(",
-                        "threading.Thread",
-                        "socket",
-                        "requests.get",
-                        "urllib",
-                        "subprocess",
-                        "__import__",
-                        "ctypes",
-                        "pickle.loads",
-                        "pickle.dumps",
-                    ],
-                    _ => vec![],
+                    Self::OsAccess => return vec!["os.system", "os.popen"],
+                    Self::Eval => return vec!["eval("],
+                    Self::Exec => return vec!["exec("],
+                    Self::FileIO => return vec!["open("],
+                    Self::Threading => return vec!["threading.Thread"],
+                    Self::Network => return vec!["socket", "requests.get", "urllib", "subprocess"],
+                    Self::Import => return vec!["__import__"],
+                    Self::Ctypes => return vec!["ctypes"],
+                    Self::Pickle => return vec!["pickle.loads", "pickle.dumps"],
+                    Self::All => {
+                        return vec![
+                            "os.system",
+                            "os.popen",
+                            "eval(",
+                            "exec(",
+                            "open(",
+                            "threading.Thread",
+                            "socket",
+                            "requests.get",
+                            "urllib",
+                            "subprocess",
+                            "__import__",
+                            "ctypes",
+                            "pickle.loads",
+                            "pickle.dumps",
+                        ];
+                    }
+                    Self::SysAccess
+                    | Self::Runtime
+                    | Self::Reflection
+                    | Self::ProcessExec
+                    | Self::SystemCall
+                    | Self::Assembly
+                    | Self::Signal
+                    | Self::Process
+                    | Self::Unsafe
+                    | Self::FFI
+                    | Self::Command
+                    | Self::Unknown => return vec![],
                 },
                 Language::Java => match &self {
-                    Self::FileIO => vec![
-                        "java.io.FileInputStream",
-                        "java.io.FileOutputStream",
-                        "java.io.FileReader",
-                        "java.io.FileWriter",
-                    ],
-                    Self::SysAccess => vec![
-                        "System.exit",
-                        "System.setSecurityManager",
-                        "SecurityManager",
-                        "checkPermission",
-                    ],
-                    Self::Runtime => vec![
-                        "Runtime",
-                        "Runtime.exec",
-                        "Runtime.getRuntime",
-                        "runtimeexec",
-                    ],
-                    Self::Threading => vec!["Thread", "Thread.start"],
-                    Self::Reflection => vec![
-                        "reflect",
-                        "Class.forName",
-                        "Class.getDeclaredMethod",
-                        "Class.getMethod",
-                        "setAccessible",
-                        "invoke",
-                    ],
-                    Self::ProcessExec => vec!["ProcessBuilder", "Runtime.exec"],
-                    Self::All => vec![
-                        "java.io.FileInputStream",
-                        "java.io.FileOutputStream",
-                        "java.io.FileReader",
-                        "java.io.FileWriter",
-                        "System.exit",
-                        "System.setSecurityManager",
-                        "SecurityManager",
-                        "checkPermission",
-                        "Runtime",
-                        "Runtime.exec",
-                        "Runtime.getRuntime",
-                        "runtimeexec",
-                        "Thread",
-                        "Thread.start",
-                        "reflect",
-                        "Class.forName",
-                        "Class.getDeclaredMethod",
-                        "Class.getMethod",
-                        "setAccessible",
-                        "invoke",
-                        "ProcessBuilder",
-                    ],
-                    _ => {
-                        vec![]
+                    Self::FileIO => {
+                        return vec![
+                            "java.io.FileInputStream",
+                            "java.io.FileOutputStream",
+                            "java.io.FileReader",
+                            "java.io.FileWriter",
+                        ];
                     }
+                    Self::SysAccess => {
+                        return vec![
+                            "System.exit",
+                            "System.setSecurityManager",
+                            "SecurityManager",
+                            "checkPermission",
+                        ];
+                    }
+                    Self::Runtime => {
+                        return vec![
+                            "Runtime",
+                            "Runtime.exec",
+                            "Runtime.getRuntime",
+                            "runtimeexec",
+                        ];
+                    }
+                    Self::Threading => return vec!["Thread", "Thread.start"],
+                    Self::Reflection => {
+                        return vec![
+                            "reflect",
+                            "Class.forName",
+                            "Class.getDeclaredMethod",
+                            "Class.getMethod",
+                            "setAccessible",
+                            "invoke",
+                        ];
+                    }
+                    Self::ProcessExec => return vec!["ProcessBuilder", "Runtime.exec"],
+                    Self::All => {
+                        return vec![
+                            "java.io.FileInputStream",
+                            "java.io.FileOutputStream",
+                            "java.io.FileReader",
+                            "java.io.FileWriter",
+                            "System.exit",
+                            "System.setSecurityManager",
+                            "SecurityManager",
+                            "checkPermission",
+                            "Runtime",
+                            "Runtime.exec",
+                            "Runtime.getRuntime",
+                            "runtimeexec",
+                            "Thread",
+                            "Thread.start",
+                            "reflect",
+                            "Class.forName",
+                            "Class.getDeclaredMethod",
+                            "Class.getMethod",
+                            "setAccessible",
+                            "invoke",
+                            "ProcessBuilder",
+                        ];
+                    }
+                    Self::SystemCall
+                    | Self::Network
+                    | Self::Assembly
+                    | Self::Signal
+                    | Self::Process
+                    | Self::Unsafe
+                    | Self::FFI
+                    | Self::Command
+                    | Self::OsAccess
+                    | Self::Eval
+                    | Self::Exec
+                    | Self::Import
+                    | Self::Ctypes
+                    | Self::Pickle
+                    | Self::Unknown => return vec![],
                 },
             }
         }

@@ -1,12 +1,10 @@
-use log::*;
+use log::{info, warn};
 use serde::Serialize;
 use std::path::PathBuf;
 use strum_macros::EnumIter;
 use walkdir::WalkDir;
-use zip::result::ZipResult;
 use zip::ZipArchive;
-#[allow(unused)]
-
+use zip::result::ZipResult;
 impl From<PathBuf> for Language {
     fn from(value: PathBuf) -> Self {
         match match value.extension() {
@@ -14,27 +12,30 @@ impl From<PathBuf> for Language {
             None => {
                 if value.is_dir() {
                     info!("Guessing file type from directory. This may take a while...");
-                    for e in WalkDir::new(&value).into_iter() {
+                    for e in WalkDir::new(&value) {
                         match Self::from(e.unwrap().into_path()) {
-                            Language::Unknown(_) => continue,
-                            l => {
+                            Self::Unknown(_) => continue,
+                            l @ (Language::Java
+                            | Language::Cpp
+                            | Language::C
+                            | Language::Rust
+                            | Language::Python
+                            | Language::Guess) => {
                                 return l;
                             }
                         }
                     }
-                    warn!("Program could not find any program file within {:?}", value);
-                    return Language::Unknown(value.as_path().to_str().unwrap().to_owned());
-                } else {
-                    return Language::Unknown(value.as_path().to_str().unwrap().to_owned());
+                    warn!("Program could not find any program file within {value:?}");
+                    return Self::Unknown(value.as_path().to_str().unwrap().to_owned());
                 }
+                return Self::Unknown(value.as_path().to_str().unwrap().to_owned());
             }
         } {
-            "java" => Self::Java,
-            "jar" => Self::Java,
-            "cpp" => Self::Cpp,
-            "c" => Self::C,
-            "rs" => Self::Rust,
-            "py" => Self::Python,
+            "jar" | "java" => return Self::Java,
+            "cpp" => return Self::Cpp,
+            "c" => return Self::C,
+            "rs" => return Self::Rust,
+            "py" => return Self::Python,
             "zip" | "tar" | "tar.gz" => {
                 if contains_in_zip(&value, "Cargo.toml").unwrap() {
                     return Self::Rust;
@@ -52,9 +53,9 @@ impl From<PathBuf> for Language {
                     return Self::Java;
                 }
                 warn!("couldn't find entry point!");
-                Self::Unknown(value.as_path().to_str().unwrap().to_owned())
+                return Self::Unknown(value.as_path().to_str().unwrap().to_owned());
             }
-            _ => Self::Unknown(value.as_path().to_str().unwrap().to_owned()),
+            _ => return Self::Unknown(value.as_path().to_str().unwrap().to_owned()),
         }
     }
 }
@@ -68,10 +69,11 @@ fn contains_in_zip(p: &PathBuf, target: &str) -> ZipResult<bool> {
             return Ok(true);
         }
     }
-    Ok(false)
+    return Ok(false);
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, EnumIter, Serialize)]
+#[non_exhaustive]
 pub enum Language {
     Java,
     Cpp,

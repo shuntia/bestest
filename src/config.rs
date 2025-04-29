@@ -1,27 +1,29 @@
 use crate::checker::{self, Type};
 use crate::executable::Language;
 use crate::test::TestCase;
-use clap::*;
+use anyhow::{Ok, Result};
+use clap::{Parser, Subcommand};
+use core::fmt::{Display, Formatter};
+use core::str::FromStr as _;
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use itertools::EitherOrBoth::{Both, Left, Right};
-use itertools::Itertools;
+use itertools::Itertools as _;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter};
+use std::env;
 #[cfg(not(feature = "gui"))]
 use std::fs::File;
+use std::fs::create_dir_all;
 #[cfg(not(feature = "gui"))]
-use std::io::Read;
+use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::exit;
-use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{env, fs};
 use tokio::sync::Mutex;
 
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 fn load_config() -> Config {
@@ -51,44 +53,48 @@ fn load_config() -> Config {
         };
     #[cfg(feature = "gui")]
     let cp = crate::gui::app::get_config();
-    if cp.entry == None {
-        error!("User did not specify entry point! Falling back to\"Main\".")
+    if cp.entry.is_none() {
+        error!("User did not specify entry point! Falling back to\"Main\".");
     }
-    if cp.target == None {
+    if cp.target.is_none() {
         error!("Could not find target!");
         exit(1);
     }
 
     let config = Config {
-        entry: cp.entry.unwrap_or("Main".into()),
+        entry: cp.entry.unwrap_or_else(|| "Main".into()),
         lang: Language::Guess,
-        target: cp.target.unwrap_or(std::env::current_dir().unwrap()),
-        args: cp.args.unwrap_or(vec![]),
+        target: cp
+            .target
+            .unwrap_or_else(|| std::env::current_dir().unwrap()),
+        args: cp.args.unwrap_or_default(),
         testcases: cp
             .input
-            .unwrap_or(vec![])
+            .unwrap_or_default()
             .iter()
-            .zip(cp.output.unwrap_or(vec![]).iter())
-            .zip_longest(cp.points.unwrap_or(vec![]).iter())
+            .zip(cp.output.unwrap_or_default().iter())
+            .zip_longest(cp.points.unwrap_or_default().iter())
             .map(move |eob| match eob {
-                Both((a, b), c) => TestCase {
-                    input: a.to_string(),
-                    expected: b.to_string(),
-                    points: *c,
-                },
+                Both((a, b), c) => {
+                    return TestCase {
+                        input: a.to_string(),
+                        expected: b.to_string(),
+                        points: *c,
+                    };
+                }
                 Left((a, b)) => {
                     debug!("Found test case without any points! Falling back to zero points.");
-                    TestCase {
+                    return TestCase {
                         input: a.to_string(),
                         expected: b.to_string(),
                         points: 0,
-                    }
+                    };
                 }
                 Right(c) => {
                     error!("Points without any I/O! Did you forget to add the cases?");
                     TestCase {
-                        input: "".into(),
-                        expected: "".into(),
+                        input: String::new(),
+                        expected: String::new(),
                         points: *c,
                     }
                 }
@@ -98,21 +104,22 @@ fn load_config() -> Config {
         memory: cp.memory.unwrap_or(1024),
         threads: cp.threads.unwrap_or(4),
         checker: cp.checker.unwrap_or(Type::Static),
-        allow: cp.allow.unwrap_or(vec![]),
-        format: match &cp.format {
-            Some(s) => s.into(),
-            None => "{name}_{num}_{id}_{filename}.{extension}".into(),
-        },
+        allow: cp.allow.unwrap_or_default(),
+        format: cp.format.as_ref().map_or_else(
+            || "{name}_{num}_{id}_{filename}.{extension}".into(),
+            |s| s.into(),
+        ),
         orderby: cp.orderby.unwrap_or(Orderby::Id),
-        dependencies: cp.dependencies.unwrap_or(vec![]),
+        dependencies: cp.dependencies.unwrap_or_default(),
     };
-    config
+    return config;
 }
 
-pub fn get_config() -> Result<&'static Lazy<Config>, String> {
-    Ok(&CONFIG)
+pub fn get_config() -> Result<&'static LazyLock<Config>> {
+    return Ok(&CONFIG);
 }
 
+#[must_use]
 pub fn generate_regex(format: &str) -> Regex {
     // Predefined placeholders and their regex patterns
     let placeholders = HashMap::from([
@@ -127,33 +134,34 @@ pub fn generate_regex(format: &str) -> Regex {
     ]);
 
     // Replace placeholders with corresponding regex patterns
-    let mut pattern = format.to_string();
+    let mut pattern = format.to_owned();
     for (key, value) in &placeholders {
-        pattern = pattern.replace(&format!("{{{}}}", key), value);
+        pattern = pattern.replace(&format!("{{{key}}}"), value);
     }
 
     // Escape the dot (.) for file extensions
-    pattern = pattern.replace(".", "\\.");
+    pattern = pattern.replace('.', "\\.");
 
-    Regex::new(&format!("^{}$", pattern)).unwrap()
+    Regex::new(&format!("^{pattern}$")).unwrap()
 }
 
 impl From<&str> for Language {
-    fn from(value: &str) -> Language {
+    fn from(value: &str) -> Self {
         match value {
-            "java" => Language::Java,
-            "jar" => Language::Java,
-            "cpp" => Language::Cpp,
-            "c" => Language::C,
-            "rs" => Language::Rust,
-            "py" => Language::Python,
-            _ => Language::Unknown("".into()),
+            "java" => Self::Java,
+            "jar" => Self::Java,
+            "cpp" => Self::Cpp,
+            "c" => Self::C,
+            "rs" => Self::Rust,
+            "py" => Self::Python,
+            _ => Self::Unknown(String::new()),
         }
     }
 }
 #[deprecated]
+#[must_use]
 pub fn match_ext(s: &str) -> Language {
-    Language::from(s)
+    return Language::from(s);
 }
 
 pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -164,13 +172,14 @@ pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
             .expect("Time went backwards")
             .as_nanos()
     );
-    fs::create_dir(foldername.clone()).unwrap();
-    PathBuf::from(foldername)
+    create_dir_all(foldername.clone()).unwrap();
+    return PathBuf::from(foldername);
 });
 
-pub static CONFIG: Lazy<Config> = Lazy::new(load_config);
+pub static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(load_config);
 
 #[derive(Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ConfigParams {
     pub entry: Option<String>,
     pub lang: Option<String>,
@@ -191,7 +200,7 @@ pub struct ConfigParams {
 
 impl Default for ConfigParams {
     fn default() -> Self {
-        ConfigParams {
+        Self {
             entry: None,
             lang: Some("Guess".into()),
             args: Some(vec![]),
@@ -212,6 +221,7 @@ impl Default for ConfigParams {
 }
 
 #[derive(Clone, Serialize)]
+#[non_exhaustive]
 pub struct Config {
     pub entry: String,
     pub lang: Language,
@@ -229,6 +239,7 @@ pub struct Config {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Orderby {
     Name,
     Id,
@@ -236,8 +247,8 @@ pub enum Orderby {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
-            entry: "".into(),
+        Self {
+            entry: String::new(),
             lang: Language::Guess,
             args: vec![],
             target: env::current_dir().unwrap(),
@@ -255,7 +266,7 @@ impl Default for Config {
 }
 
 impl Display for Config {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         writeln!(f, "Language: {:?}", self.lang)?;
         writeln!(f, "Args: {:?}", self.args)?;
         writeln!(f, "Target: {:?}", self.target)?;
@@ -264,11 +275,12 @@ impl Display for Config {
         writeln!(f, "Memory: {:?}MB", self.memory)?;
         writeln!(f, "Threads: {:?}", self.threads)?;
         writeln!(f, "Checker: {:?}", self.checker)?;
-        writeln!(f, "Allow: {:?}", self.allow)
+        return writeln!(f, "Allow: {:?}", self.allow);
     }
 }
 
 #[derive(Debug, Parser, Clone)]
+#[non_exhaustive]
 pub struct Args {
     /// subcommands
     #[clap(subcommand)]
@@ -276,6 +288,7 @@ pub struct Args {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum CommandType {
     Init,
     Run,
@@ -284,6 +297,7 @@ pub enum CommandType {
 }
 
 #[derive(Debug, Subcommand, Clone)]
+#[non_exhaustive]
 pub enum Command {
     /// initialize the tests
     Init {
@@ -336,17 +350,17 @@ pub enum Command {
 }
 
 impl Args {
-    pub fn get_config(&self) -> Option<&PathBuf> {
+    pub const fn get_config(&self) -> Option<&PathBuf> {
         match &self.command {
-            Command::Run { config, .. } => config.as_ref(),
-            _ => None,
+            Command::Run { config, .. } => return config.as_ref(),
+            Command::Init { .. } | Command::Test | Command::Format => return None,
         }
     }
 }
 
 impl Default for Args {
     fn default() -> Self {
-        Args {
+        Self {
             command: Command::Run {
                 test: None,
                 verbose: false,
@@ -365,6 +379,7 @@ impl Default for Args {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SimpleOpts {
     pub mode: CommandType,
     /// Test functionality
@@ -391,15 +406,16 @@ pub struct SimpleOpts {
     pub artifacts: bool,
 }
 impl SimpleOpts {
+    #[must_use]
     pub fn new() -> Self {
-        debug!("converting ARGS into SimpleOpts: {:?}", ARGS);
-        return (*ARGS).clone().into();
+        debug!("converting ARGS into SimpleOpts: {ARGS:?}");
+        (*ARGS).clone().into()
     }
 }
 
 impl Default for SimpleOpts {
     fn default() -> Self {
-        SimpleOpts {
+        Self {
             mode: CommandType::Run,
             test: None,
             verbose: false,
@@ -420,13 +436,13 @@ impl Default for SimpleOpts {
 
 impl From<Lazy<Args>> for SimpleOpts {
     fn from(value: Lazy<Args>) -> Self {
-        value.clone().into()
+        return value.clone().into();
     }
 }
 
 impl From<Args> for SimpleOpts {
     fn from(value: Args) -> Self {
-        let mut ret = SimpleOpts::default();
+        let mut ret = Self::default();
         match value.command {
             Command::Init { silent, quiet } => {
                 ret.quiet = quiet;
@@ -453,58 +469,57 @@ impl From<Args> for SimpleOpts {
                 ret.quiet = quiet;
                 ret.silent = silent;
                 ret.log_level = log_level;
-                ret.config = match config {
-                    None => {
-                        debug!("Probing for test toml.");
-                        let toml: Option<PathBuf> = None;
-                        for i in env::current_dir().unwrap().read_dir().unwrap() {
-                            let res = i.unwrap();
-                            if let Some(s) = res.path().extension() {
-                                if s == "toml" && toml.is_some() {
-                                    error!(
-                                        "apcs-tester found two tomls! Specify which one to use!"
-                                    );
-                                    panic!("failed to determine what to use.");
+                ret.config =
+                    match config {
+                        None => {
+                            debug!("Probing for test toml.");
+                            let toml: Option<PathBuf> = None;
+                            for i in env::current_dir().unwrap().read_dir().unwrap() {
+                                let res = i.unwrap();
+                                if let Some(s) = res.path().extension() {
+                                    if s == "toml" && toml.is_some() {
+                                        error!(
+                                            "apcs-tester found two tomls! Specify which one to use!"
+                                        );
+                                        panic!("failed to determine what to use.");
+                                    }
                                 }
                             }
-                        }
-                        match toml {
-                            Some(s) => s,
-                            None => {
+                            toml.map_or_else(|| {
                                 error!(
                                     "Since user did not give config, Probed for config in cd: {}",
                                     env::current_dir().unwrap().to_str().unwrap()
                                 );
                                 error!("However, failed to find a toml file.");
                                 panic!("failed to find config.");
+                            }, |s| s)
+                        }
+                        Some(p) => {
+                            if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml")
+                            {
+                                error!(
+                                    "Unrecognized file format or illegal path: {}",
+                                    p.to_str().unwrap()
+                                );
                             }
+                            p
                         }
-                    }
-                    Some(p) => {
-                        if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml") {
-                            error!(
-                                "Unrecognized file format or illegal path: {}",
-                                p.to_str().unwrap()
-                            );
-                        }
-                        p
-                    }
-                };
+                    };
                 ret.output = output;
                 ret.dry_run = dry_run;
                 ret.artifacts = artifacts;
             }
-            _ => {}
+            Command::Test | Command::Format => {}
         }
-        return ret;
+        ret
     }
 }
 #[cfg(not(feature = "gui"))]
-pub static ARGS: Lazy<Args> = Lazy::new(Args::parse);
+pub static ARGS: std::sync::LazyLock<Args> = std::sync::LazyLock::new(Args::parse);
 #[cfg(feature = "gui")]
 pub static ARGS: Lazy<Args> = Lazy::new(Args::default);
 #[cfg(not(feature = "gui"))]
-pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::new);
+pub static SIMPLEOPTS: std::sync::LazyLock<SimpleOpts> = std::sync::LazyLock::new(SimpleOpts::new);
 #[cfg(feature = "gui")]
 pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::default);
 
@@ -526,20 +541,20 @@ pub fn proc_args() {
             output,
             ..
         } => {
-            if *test != None {
+            if test.is_some() {
                 debug!("Test mode is enabled. Ignoring rest of arguments.");
             }
             if *verbose {
                 debug!("Verbose mode enabled");
-            };
+            }
             if *debug {
                 debug!("Debug mode enabled");
-            };
+            }
             if *trace {
                 trace!("Trace mode enabled");
             }
 
-            if *output == None {
+            if output.is_none() {
                 debug!("No output file or directory specified. falling back to stdout.");
             } else {
                 let tmp = output.clone().unwrap();
@@ -573,18 +588,22 @@ pub fn proc_args() {
                 }
             }
         }
-        _ => {}
+        Command::Test | Command::Format => {}
     }
 }
 
-pub static MULTIPROG: Lazy<Mutex<MultiProgress>> =
-    Lazy::new(|| Mutex::new(MultiProgress::with_draw_target(ProgressDrawTarget::stdout())));
-
-pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    [
-        "java", "jar", "c", "cpp", "rs", "py", "tar", "tar.gz", "gz", "zip",
-    ]
-    .into()
+pub static MULTIPROG: std::sync::LazyLock<Mutex<MultiProgress>> = std::sync::LazyLock::new(|| {
+    return Mutex::new(MultiProgress::with_draw_target(ProgressDrawTarget::stdout()));
 });
 
-pub const SPINNER: [&'static str; 6] = ["", "", "", "", "", ""];
+pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    return [
+        "java", "jar", "c", "cpp", "rs", "py", "tar", "tar.gz", "gz", "zip",
+    ]
+    .into();
+});
+
+// Spinner only properly displays if you have nerd fonts installed.
+pub const SPINNER: [&str; 6] = [
+    "\u{ee06}", "\u{ee07}", "\u{ee08}", "\u{ee08}", "\u{ee0a}", "\u{ee0b}",
+];

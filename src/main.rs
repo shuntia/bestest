@@ -4,10 +4,9 @@
 #![deny(clippy::cargo)]
 #![deny(clippy::restriction)]
 use console::style;
-use env_logger;
 use indicatif_log_bridge::LogWrapper;
 use log::LevelFilter;
-#[allow(unused)]
+#[expect(unused)]
 use log::{debug, error, info, trace, warn};
 use std::{
     collections::{HashMap, HashSet},
@@ -16,7 +15,7 @@ use std::{
 };
 use tokio::{
     fs::{File, remove_dir_all},
-    io::AsyncWriteExt,
+    io::AsyncWriteExt as _,
 };
 pub mod checker;
 pub mod config;
@@ -27,7 +26,7 @@ pub mod lang;
 pub mod test;
 pub mod unpacker;
 use checker::{IllegalExpr, check_dirs};
-use config::*;
+use config::{CONFIG, CommandType, ConfigParams, SIMPLEOPTS, TEMPDIR, proc_args};
 
 #[tokio::main]
 async fn main() {
@@ -66,8 +65,8 @@ async fn main() {
                 .expect("failed to write to config!");
             exit(0);
         }
-        _ => {}
-    };
+        CommandType::Run | CommandType::Test | CommandType::Format => {}
+    }
     let config = &CONFIG;
     debug!("Config:\n{}", (*config).clone());
     let target = unpacker::unpack_dir(CONFIG.target.clone()).await;
@@ -81,26 +80,26 @@ async fn main() {
         target
             .iter()
             .cloned()
-            .filter_map(|el| el.ok())
+            .filter_map(|el| return el.ok())
             .collect::<Vec<_>>()
     );
     let check_result: HashMap<PathBuf, Vec<IllegalExpr>> =
-        check_dirs(target.iter().cloned().filter_map(|el| el.ok()).collect())
+        check_dirs(target.iter().cloned().filter_map(|el| return el.ok()).collect())
             .await
             .unwrap()
             .iter()
-            .filter(|el| !el.1.is_empty())
-            .map(|el| (el.0.clone(), el.1.clone()))
+            .filter(|el| return !el.1.is_empty())
+            .map(|el| return (el.0.clone(), el.1.clone()))
             .collect();
     if check_result.is_empty() {
         info!(
             "{} All safety checks passed.",
-            style("[AC]").green().bold().to_string()
+            style("[AC]").green().bold()
         );
     } else {
         warn!("Dangerous code detected.");
         for i in &check_result {
-            warn!("{:?}", i);
+            warn!("{i:?}");
         }
         warn!("Aborting check for those files.");
         info!(
@@ -111,7 +110,7 @@ async fn main() {
     let mut exec: HashSet<PathBuf> = TEMPDIR
         .read_dir()
         .unwrap()
-        .map(|el| PathBuf::from(el.unwrap().path()))
+        .map(|el| el.unwrap().path())
         .collect();
     for i in check_result {
         let mut rem = i.0;
@@ -121,7 +120,7 @@ async fn main() {
         exec.remove(&rem);
     }
     info!("Starting tests...");
-    debug!("Target dirs: {:?}", exec);
+    debug!("Target dirs: {exec:?}");
     if exec.is_empty() {
         error!(
             "None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file."
@@ -129,13 +128,13 @@ async fn main() {
         exit(0);
     }
     let res = test::test_dirs(exec).await;
-    debug!("Results: {:#?}", res);
+    debug!("Results: {res:#?}");
     let mut points = vec![];
     for i in res {
         let mut acc = 0;
         for j in 0..i.1.len() {
             if i.1[j].is_correct() {
-                acc += config.testcases[j].points
+                acc += config.testcases[j].points;
             }
         }
         points.push((i.0.file_name().unwrap().to_str().unwrap().to_owned(), acc));

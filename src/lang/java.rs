@@ -2,8 +2,9 @@ use super::runner::{Error, RunError, Runner};
 use crate::executable::Language;
 use async_trait::async_trait;
 use log::{debug, warn};
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use std::{
+    fs::create_dir_all,
     path::PathBuf,
     process::{ExitStatus, Stdio},
     sync::OnceLock,
@@ -11,7 +12,7 @@ use std::{
 };
 use tokio::{
     fs::copy,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt as _, AsyncWriteExt as _},
     process::{Child, ChildStdout, Command},
 };
 
@@ -29,23 +30,24 @@ pub struct JavaRunner {
 impl Runner for JavaRunner {
     async fn add_dep(&mut self, p: PathBuf) -> Result<(), String> {
         self.deps.push(p.clone());
-        let mut target = self.venv.clone().unwrap();
-        target.push(PathBuf::from(p.file_name().unwrap()));
-        copy(p, target)
-            .await
-            .map_err(|e| format!("{}", e).to_owned())?;
+        let target = self
+            .venv
+            .clone()
+            .unwrap()
+            .join(PathBuf::from(p.file_name().unwrap()));
+        copy(p, target).await.map_err(|e| format!("{e}"))?;
         Ok(())
     }
     async fn add_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String> {
         self.deps.extend(p.clone());
         let venvdir = self.venv.clone();
-        std::fs::create_dir(venvdir.clone().unwrap()).map_err(|e| format!("{}", e).to_owned())?;
+        create_dir_all(venvdir.clone().unwrap()).map_err(|e| format!("{e}"))?;
         for i in p {
-            let mut target = venvdir.clone().unwrap();
-            target.push(PathBuf::from(i.file_name().unwrap()));
-            copy(i, target)
-                .await
-                .map_err(|e| format!("{}", e).to_owned())?;
+            let target = venvdir
+                .clone()
+                .unwrap()
+                .join(PathBuf::from(i.file_name().unwrap()));
+            copy(i, target).await.map_err(|e| format!("{e}"))?;
         }
         Ok(())
     }
@@ -87,8 +89,8 @@ impl Runner for JavaRunner {
                 .unwrap()
                 .write_all(input.as_bytes())
                 .await
-                .map_err(|e| format!("{}", e))
-                .map(|_| ()),
+                .map_err(|e| format!("{e}"))
+                .map(|()| ()),
             None => Err("Process has not started yet!".into()),
         }
     }
@@ -126,7 +128,7 @@ impl Runner for JavaRunner {
         match ext.as_str() {
             "java" => {
                 debug!("detected bare java file.");
-                ret = JavaRunner {
+                ret = Self {
                     start: None,
                     command: Command::new("java"),
                     process: None,
@@ -138,14 +140,14 @@ impl Runner for JavaRunner {
                 ret.command
                     .arg("-cp")
                     .arg(venv.to_str().unwrap())
-                    .arg(&entry.file_stem().unwrap())
+                    .arg(entry.file_stem().unwrap())
                     .stdin(Stdio::piped())
                     .stderr(Stdio::piped())
                     .stdout(Stdio::piped());
             }
             "jar" => {
                 debug!("detected java executable archive.");
-                ret = JavaRunner {
+                ret = Self {
                     start: None,
                     command: Command::new("java"),
                     process: None,
@@ -161,7 +163,7 @@ impl Runner for JavaRunner {
                     .stdout(Stdio::piped());
             }
             _ => panic!("give me a java file."),
-        };
+        }
         Ok(ret)
     }
     async fn run(&mut self) -> Result<(), RunError> {
@@ -196,26 +198,22 @@ impl Runner for JavaRunner {
         Language::Java
     }
     async fn signal(&mut self, s: Signal) -> Result<(), String> {
-        let pid = nix::unistd::Pid::from_raw(match &self.process {
-            Some(c) => c.id().unwrap() as i32,
-            None => {
-                log::error!("tried to kill PID that does not exist!");
-                return Err("tried to kill PID that does not exist".into());
-            }
+        let pid = nix::unistd::Pid::from_raw(if let Some(c) = &self.process {
+            c.id().unwrap() as i32
+        } else {
+            log::error!("tried to kill PID that does not exist!");
+            return Err("tried to kill PID that does not exist".into());
         });
         match kill(pid, s) {
             Err(e) => {
-                log::error!("failed to kill PID {}! error: {}", pid, e);
-                return Err(e.to_string().into());
+                log::error!("failed to kill PID {pid}! error: {e}");
+                return Err(e.to_string());
             }
-            Ok(_) => {}
+            Ok(()) => {}
         }
         Ok(())
     }
     async fn runtime(&self) -> Result<Duration, ()> {
-        match &self.start {
-            Some(s) => Ok(s.elapsed()),
-            None => Err(()),
-        }
+        self.start.as_ref().map_or(Err(()), |s| Ok(s.elapsed()))
     }
 }

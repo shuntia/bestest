@@ -13,79 +13,78 @@ use tokio::fs::copy;
 use tokio::process::ChildStdout;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Error {
     pub description: String,
 }
 impl Error {
+    #[must_use]
     pub fn new(description: &'static str) -> Self {
-        Self {
+        return Self {
             description: description.into(),
-        }
+        };
     }
 }
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "error: {}", self.description)
+    fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
+        return write!(f, "error: {}", self.description);
     }
 }
 
 pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runner>> {
     //probe
-    if lang.is_some() {
-        if lang.unwrap() != Language::Java {
-            error!("Language other than java not yet implemented!");
-            return None;
-        }
+    if lang.is_some() && lang.unwrap() != Language::Java {
+        error!("Language other than java not yet implemented!");
+        return None;
     }
     for i in &CONFIG.dependencies {
         if copy(i, p.clone().join(i.file_name().unwrap()))
             .await
             .is_err()
         {
-            error!("Failed to copy dependency: {:?}", i);
-        };
+            error!("Failed to copy dependency: {i:?}");
+        }
     }
     let entry = match find_in_dir(&p, &CONFIG.entry)
-        .or(find_in_dir(&p, &CONFIG.entry.clone().to_lowercase()))
+        .or_else(|| find_in_dir(&p, &CONFIG.entry.clone().to_lowercase()))
     {
         Some(s) => s,
         None => {
             warn!("Failed to find entry point! Falling back to \"Main\".");
-            match find_in_dir(&p, "main").or(find_in_dir(&p, "Main")) {
+            match find_in_dir(&p, "main").or_else(|| find_in_dir(&p, "Main")) {
                 Some(s) => s,
                 None => {
                     error!("Failed to find main!");
-                    if p.read_dir().unwrap().into_iter().count() > 1 {
+                    if p.read_dir().unwrap().count() > 1 {
                         error!("There are too many files! Failed to determine which one to use!");
                         return None;
-                    } else {
-                        warn!("Will run any file inside target directory.");
-                        p.read_dir()
-                            .unwrap()
-                            .into_iter()
-                            .next()
-                            .unwrap()
-                            .ok()
-                            .map(|el| el.path())
-                            .unwrap()
                     }
+                    warn!("Will run any file inside target directory.");
+                    p.read_dir()
+                        .unwrap()
+                        .next()
+                        .unwrap()
+                        .ok()
+                        .map(|el| return el.path())
+                        .unwrap()
                 }
             }
         }
     };
-    debug!("Finished probing. Entry point: {:?}", entry);
+    debug!("Finished probing. Entry point: {entry:?}");
     match entry.extension().unwrap().to_str().unwrap() {
         "java" => Some(Box::new(JavaRunner::new_from_venv(p, entry).await.unwrap())),
         ext => {
-            error!("Unknown extension: {}", ext);
+            error!("Unknown extension: {ext}");
             None
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RunError {
     CE(Option<i32>, String),
     RE(Option<i32>, String),

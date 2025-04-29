@@ -1,12 +1,12 @@
 use crate::config::Orderby;
 use crate::config::{CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR, generate_regex};
+use core::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, warn};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{os::unix::fs::PermissionsExt as _, path::PathBuf};
 use tokio::fs::{copy, create_dir};
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use zip::read::ZipArchive;
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum UnpackError {
     FileFormat,
     Executable,
@@ -36,7 +37,7 @@ async fn unzip_to_dir<T: AsRef<Path> + Clone>(
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let file_name = file.name().to_string();
+        let file_name = file.name().to_owned();
         let dest_path = dest_dir.as_ref().join(file_name);
 
         if file.name().ends_with('/') {
@@ -51,7 +52,9 @@ async fn unzip_to_dir<T: AsRef<Path> + Clone>(
 }
 
 pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
-    let semaphore = Arc::new(Semaphore::new(CONFIG.threads as usize));
+    let semaphore = Arc::new(Semaphore::new(
+        usize::try_from(CONFIG.threads).expect("REASON"),
+    ));
     let mut handles = vec![];
     if p.is_file() {
         error!("Expected path, instead got file! Unpacking single file anyway...");
@@ -76,11 +79,12 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         prog.enable_steady_tick(Duration::from_millis(50));
         handles.push(tokio::task::spawn(unpack_semaphore_prog(
             entry.unwrap().path(),
-            semaphore.clone(),
+            Arc::<tokio::sync::Semaphore>::clone(&semaphore),
             prog,
-            op.clone(),
+            Arc::<tokio::sync::Mutex<indicatif::ProgressBar>>::clone(&op),
         )));
     }
+    drop(mp);
     let mut ret = vec![];
     for i in handles {
         if let Ok(p) = i.await {
@@ -88,16 +92,21 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
         } else {
             continue;
         }
-        match ret.get(ret.len() - 1).unwrap() {
+        match ret.last().unwrap() {
             Ok(p) => {
                 debug!(
                     "Successfully unpacked {}",
                     p.file_name().unwrap().to_str().unwrap()
-                )
+                );
             }
             Err(e) => match e {
                 UnpackError::Ignore => {}
-                err => error!("Failed to unpack: {:?}", err),
+                err @ (UnpackError::FileFormat
+                | UnpackError::Executable
+                | UnpackError::FileType
+                | UnpackError::ZipProblem(_)
+                | UnpackError::Os(_)
+                | UnpackError::Unknown) => error!("Failed to unpack: {err:?}"),
             },
         }
     }
@@ -123,7 +132,7 @@ async fn unpack_semaphore(p: PathBuf, s: Arc<Semaphore>) -> Result<PathBuf, Unpa
     let sp = s.acquire().await.unwrap();
     let ret = unpack(p).await;
     drop(sp);
-    return ret;
+    ret
 }
 
 pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
@@ -145,7 +154,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             Some(s) => name = s,
             None => {
                 error!("format requires {{name}} or {{id}} so that apcs-tester knows what to do!");
-                error!("Capture failed for {:?}", p);
+                error!("Capture failed for {p:?}");
                 return Err(UnpackError::FileFormat);
             }
         }
@@ -154,7 +163,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             ext.as_str()
         } else if let Some(ext_os) = p.extension() {
             if let Some(ext_str) = ext_os.to_str() {
-                s = ext_str.to_string();
+                s = ext_str.to_owned();
                 s.as_str()
             } else {
                 warn!("Failed to convert extension to str!");
@@ -176,17 +185,16 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         if ["toml", "json"].contains(&ext) {
             return Err(UnpackError::Ignore);
         }
-        let mut target = TEMPDIR.clone();
-        target.push(name.as_str());
+        let target = TEMPDIR.clone().join(name.as_str());
         match create_dir(&target).await {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 return Err(UnpackError::Os(e.raw_os_error().unwrap()));
             }
         }
-        if vec!["zip", "tar", "tar.gz"].contains(&ext) {
+        if ["zip", "tar", "tar.gz"].contains(&ext) {
             match unzip_to_dir(p, target.clone()).await {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(e) => {
                     return Err(UnpackError::ZipProblem(e.to_string()));
                 }
@@ -195,11 +203,9 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             match copy(
                 p.clone(),
                 target.join(
-                    match caps.name("filename") {
-                        Some(s) => s.as_str(),
-                        None => name.as_str(),
-                    }
-                    .to_owned()
+                    caps.name("filename")
+                        .map_or_else(|| name.as_str(), |s| s.as_str())
+                        .to_owned()
                         + "."
                         + p.extension().unwrap().to_str().unwrap(),
                 ),
@@ -216,8 +222,9 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     Err(UnpackError::Ignore)
 }
 
+#[must_use]
 pub fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {
-    for e in WalkDir::new(p).into_iter() {
+    for e in WalkDir::new(p) {
         if e.as_ref()
             .unwrap()
             .file_name()
@@ -229,5 +236,5 @@ pub fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {
             return Some(e.unwrap().into_path());
         }
     }
-    None
+    return None;
 }

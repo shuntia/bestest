@@ -3,31 +3,33 @@ use crate::config::{CONFIG, MULTIPROG};
 use crate::executable::Language;
 use crate::lang::runner::{self, RunError, Runner};
 use console::style;
+use core::{ops::Range, time::Duration};
 use imara_diff::{Algorithm, diff, intern::InternedInput};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::{ops::Range, path::PathBuf, time::Duration};
 use tokio::sync::{Mutex, MutexGuard, Semaphore};
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[non_exhaustive]
 pub struct TestCase {
     pub input: String,
     pub expected: String,
     pub points: u64,
 }
-impl std::fmt::Display for TestCase {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
+impl core::fmt::Display for TestCase {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        return write!(
             f,
             "Input: {}\nExpected Output: {}\nPoints: {}",
             self.input, self.expected, self.points
-        )
+        );
     }
 }
 
 impl TestCase {
-    #[allow(unused)]
+    #[expect(unused)]
     fn diff<'a>(
         &'a self,
         s: &'a str,
@@ -39,30 +41,31 @@ impl TestCase {
         let sink = |before: Range<u32>, after: Range<u32>| {
             let hunk_before: Vec<_> = input.before[before.start as usize..before.end as usize]
                 .iter()
-                .map(|&line| input.interner[line])
+                .map(|&line| return input.interner[line])
                 .collect();
             let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
                 .iter()
-                .map(|&line| input.interner[line])
+                .map(|&line| return input.interner[line])
                 .collect();
             if hunk_after.is_empty() {
-                removals.push(hunk_before)
+                removals.push(hunk_before);
             } else if hunk_before.is_empty() {
-                insertions.push(hunk_after)
+                insertions.push(hunk_after);
             } else {
-                replacements.push((hunk_before, hunk_after))
+                replacements.push((hunk_before, hunk_after));
             }
         };
         diff(Algorithm::Histogram, &input, sink);
-        return (
+        (
             removals[0].clone(),
             insertions[0].clone(),
             replacements[0].clone(),
-        );
+        )
     }
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TestResult {
     Correct {
         case: &'static TestCase,
@@ -78,28 +81,28 @@ pub enum TestResult {
 }
 
 impl TestResult {
-    pub fn is_correct(&self) -> bool {
+    pub const fn is_correct(&self) -> bool {
         match self {
-            Self::Correct { .. } => true,
-            _ => false,
+            Self::Correct { .. } => return true,
+            Self::Wrong { .. } | Self::Error { .. } => return false,
         }
     }
-    pub fn get_loc(&self) -> Option<&Vec<WrongLine<usize>>> {
+    pub const fn get_loc(&self) -> Option<&Vec<WrongLine<usize>>> {
         match &self {
-            Self::Wrong { case: _, loc } => Some(loc),
-            _ => None,
+            Self::Wrong { case: _, loc } => return Some(loc),
+            Self::Correct { .. } | Self::Error { .. } => return None,
         }
     }
+    #[must_use]
     pub fn msg(&self) -> String {
         if self.is_correct() {
-            style("[AC]").green().bold().to_string()
-        } else {
-            style("[NG]").red().bold().to_string()
+            return style("[AC]").green().bold().to_string();
         }
+        return style("[NG]").red().bold().to_string();
     }
 }
 
-#[allow(unused)]
+#[expect(unused)]
 #[derive(Debug, Clone)]
 pub struct WrongLine<T> {
     before: Range<T>,
@@ -108,7 +111,9 @@ pub struct WrongLine<T> {
 
 pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, Vec<TestResult>)> {
     let max_threads = config::get_config().unwrap().threads;
-    let semaphore = Arc::new(Semaphore::new(max_threads as usize));
+    let semaphore = Arc::new(Semaphore::new(
+        usize::try_from(max_threads).expect("REASON"),
+    ));
     let mut handles = vec![];
     let mp = MULTIPROG.lock().await;
     let _ = mp.clear();
@@ -120,7 +125,7 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
                 "[{elapsed_precise}] running tests... [{wide_bar:.bold.cyan/blue}] ({pos}/{len})",
             )
             .unwrap()
-            .progress_chars("█─"),
+            .progress_chars("\u{2588}\u{e0b0}\u{2500}"),
     );
     op.enable_steady_tick(Duration::from_millis(100));
     let pass = Arc::new(Mutex::new(op));
@@ -128,37 +133,37 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
     for i in &v {
         handles.push(tokio::task::spawn(test_file_progress(
             i.clone(),
-            semaphore.clone(),
-            arcmp.clone(),
-            pass.clone(),
+            Arc::<tokio::sync::Semaphore>::clone(&semaphore),
+            Arc::<tokio::sync::MutexGuard<'_, indicatif::MultiProgress>>::clone(&arcmp),
+            Arc::<tokio::sync::Mutex<indicatif::ProgressBar>>::clone(&pass),
         )));
     }
-    debug!("Processing: {:#?}", v);
+    drop(arcmp);
+    debug!("Processing: {v:#?}");
     let mut ret = vec![];
     for i in handles {
         let out = i.await.unwrap();
         if out.1.is_ok() {
             ret.push((out.0, out.1.unwrap()));
-        } else {
-            if let RunError::CE(code, reason) = out.1.unwrap_err() {
-                ret.push((
-                    out.0,
-                    vec![
-                        TestResult::Error {
-                            reason,
-                            code: code.unwrap()
-                        };
-                        CONFIG.testcases.len()
-                    ],
-                ));
-            }
+        } else if let RunError::CE(code, reason) = out.1.unwrap_err() {
+            ret.push((
+                out.0,
+                vec![
+                    TestResult::Error {
+                        reason,
+                        code: code.unwrap()
+                    };
+                    CONFIG.testcases.len()
+                ],
+            ));
         }
     }
     pass.lock().await.finish_and_clear();
     info!("All tests complete.");
-    return ret;
+    ret
 }
 
+#[must_use]
 pub fn print_tr_vec(tr: &Vec<TestResult>) -> String {
     let mut acc = 0;
     for i in tr {
@@ -167,16 +172,15 @@ pub fn print_tr_vec(tr: &Vec<TestResult>) -> String {
         }
     }
     if acc == tr.len() {
-        style(format!("[AC][{}/{}]", acc, tr.len()))
+        return style(format!("[AC][{}/{}]", acc, tr.len()))
             .bold()
             .green()
-            .to_string()
-    } else {
-        style(format!("[NG][{}/{}]", acc, tr.len()))
-            .bold()
-            .red()
-            .to_string()
+            .to_string();
     }
+    return style(format!("[NG][{}/{}]", acc, tr.len()))
+        .bold()
+        .red()
+        .to_string();
 }
 
 pub async fn test_file_progress(
@@ -192,7 +196,7 @@ pub async fn test_file_progress(
             .template(
                 format!(
                     "{{spinner}} [{{elapsed_precise}}] {} compiling {{msg}}",
-                    style("[WJ]").dim().bold().to_string()
+                    style("[WJ]").dim().bold()
                 )
                 .as_str(),
             )
@@ -203,7 +207,7 @@ pub async fn test_file_progress(
         Some(s) => s,
         None => return (path, Err(RunError::CE(None, "Unknown".into()))),
     };
-    let file = path.clone().to_path_buf();
+    let file = path.clone().clone();
     let filename = file.file_name().unwrap();
     let filenamestr = filename.to_str().unwrap().to_owned();
     prog.set_message(filenamestr);
@@ -215,15 +219,15 @@ pub async fn test_file_progress(
                 style("[CE]").bold().yellow(),
                 path.to_str().unwrap()
             );
-            debug!("{:#?}", e);
+            debug!("{e:#?}");
             return (path, Err(e));
         }
-        Ok(_) => {}
+        Ok(()) => {}
     }
     prog.finish_and_clear();
     info!(
         "{} {} Compiled successfully!",
-        style("[OK]").green().bold().to_string(),
+        style("[OK]").green().bold(),
         path.to_str().unwrap()
     );
     let prog = mp.add(ProgressBar::new(CONFIG.testcases.len() as u64));
@@ -233,7 +237,7 @@ pub async fn test_file_progress(
                 "{spinner} [{elapsed_precise}] {msg} running tests [{wide_bar:.bold.cyan/blue}]({pos}/{len})",
             )
             .unwrap()
-            .progress_chars("─▶ "),
+            .progress_chars("\u{2500}\u{25b6} "),
     );
     prog.enable_steady_tick(Duration::from_millis(50));
     let tc = &CONFIG.testcases;
@@ -245,17 +249,17 @@ pub async fn test_file_progress(
         if push.is_correct() {
             correct += 1;
         }
-        if correct != i + 1 {
+        if correct == i + 1 {
             prog.set_message(
-                style(format!("[NG] [{}/{}]", correct, tc.len()))
-                    .red()
+                style(format!("[AC] [{}/{}]", correct, tc.len()))
+                    .green()
                     .bold()
                     .to_string(),
             );
         } else {
             prog.set_message(
-                style(format!("[AC] [{}/{}]", correct, tc.len()))
-                    .green()
+                style(format!("[NG] [{}/{}]", correct, tc.len()))
+                    .red()
                     .bold()
                     .to_string(),
             );
@@ -267,7 +271,7 @@ pub async fn test_file_progress(
     op.lock().await.inc(1);
     info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
     prog.finish_and_clear();
-    return (path, Ok(ret));
+    (path, Ok(ret))
 }
 
 pub async fn test_proc(
@@ -286,7 +290,7 @@ pub async fn test_proc(
                 "failed to input stdin for process: {}",
                 &path.to_string_lossy()
             );
-            error!("Reason: {}", e)
+            error!("Reason: {e}")
         });
     while proc.running().await {
         if proc.runtime().await.unwrap() > Duration::from_millis(timeout) {
@@ -295,7 +299,7 @@ pub async fn test_proc(
                 path.file_name().unwrap().to_str().unwrap()
             );
             match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
-                Err(e) => error!("failed to kill process: {}", e),
+                Err(e) => error!("failed to kill process: {e}"),
                 Ok(()) => {}
             }
             while !proc.running().await {}
@@ -306,27 +310,26 @@ pub async fn test_proc(
         }
     }
     let out = proc.read_all().await.unwrap();
-    let input = InternedInput::new(testcase.expected.as_str(), &out.as_str());
+    let input = InternedInput::new(testcase.expected.as_str(), out.as_str());
     let sink = |before: Range<u32>, after: Range<u32>| {
         let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
             .iter()
-            .map(|&line| input.interner[line])
+            .map(|&line| return input.interner[line])
             .collect();
         wrong.push(WrongLine::<usize> {
             before: before.start as usize..before.end as usize,
             after: (
                 after.start as usize..after.end as usize,
-                hunk_after.join("\n").to_owned(),
+                hunk_after.join("\n").clone(),
             ),
         });
     };
     imara_diff::diff(Algorithm::Histogram, &input, sink);
     if !wrong.is_empty() {
         return TestResult::Wrong {
-            case: &testcase,
+            case: testcase,
             loc: wrong,
         };
-    } else {
-        return TestResult::Correct { case: &testcase };
     }
+    return TestResult::Correct { case: testcase };
 }
