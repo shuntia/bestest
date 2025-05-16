@@ -102,7 +102,8 @@ fn load_config() -> Config {
             .collect(),
         timeout: cp.timeout.unwrap_or(5),
         memory: cp.memory.unwrap_or(1024),
-        threads: cp.threads.unwrap_or(4),
+        #[allow(clippy::unwrap_used)]
+        threads: cp.threads.unwrap_or(num_cpus::get().try_into().unwrap()),
         checker: cp.checker.unwrap_or(Type::Static),
         allow: cp.allow.unwrap_or_default(),
         format: cp.format.as_ref().map_or_else(

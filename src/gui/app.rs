@@ -13,7 +13,7 @@ static WINDOW_HANDLE: OnceLock<JoinHandle<()>> = OnceLock::new();
 pub static WEAKREF: OnceLock<Weak<MainWindow>> = OnceLock::new();
 static CONFIG: OnceLock<ConfigParams> = OnceLock::new();
 
-pub async fn launch() {
+pub fn launch() {
     let mw = MainWindow::new().unwrap();
     let _ = WEAKREF.set(mw.as_weak());
     mw.on_submit(|s: slint::ModelRc<slint::SharedString>| {
@@ -58,7 +58,7 @@ pub async fn launch() {
     let _ = mw.run();
 }
 
-pub async fn wait_for_config() -> &'static ConfigParams {
+pub fn wait_for_config() -> &'static ConfigParams {
     CONFIG.wait()
 }
 

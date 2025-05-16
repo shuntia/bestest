@@ -24,10 +24,7 @@ pub enum UnpackError {
     Ignore,
     Unknown,
 }
-async fn unzip_to_dir<T: AsRef<Path> + Clone>(
-    zip_path: T,
-    dest_dir: T,
-) -> zip::result::ZipResult<()> {
+fn unzip_to_dir<T: AsRef<Path> + Clone>(zip_path: T, dest_dir: T) -> zip::result::ZipResult<()> {
     let zip_file = File::open(zip_path)?;
     let mut archive = ZipArchive::new(zip_file)?;
 
@@ -89,25 +86,23 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
     for i in handles {
         if let Ok(p) = i.await {
             ret.push(p);
-        } else {
-            continue;
-        }
-        match ret.last().unwrap() {
-            Ok(p) => {
-                debug!(
-                    "Successfully unpacked {}",
-                    p.file_name().unwrap().to_str().unwrap()
-                );
+            match ret.last().unwrap() {
+                Ok(p) => {
+                    debug!(
+                        "Successfully unpacked {}",
+                        p.file_name().unwrap().to_str().unwrap()
+                    );
+                }
+                Err(e) => match e {
+                    UnpackError::Ignore => {}
+                    err @ (UnpackError::FileFormat
+                    | UnpackError::Executable
+                    | UnpackError::FileType
+                    | UnpackError::ZipProblem(_)
+                    | UnpackError::Os(_)
+                    | UnpackError::Unknown) => error!("Failed to unpack: {err:?}"),
+                },
             }
-            Err(e) => match e {
-                UnpackError::Ignore => {}
-                err @ (UnpackError::FileFormat
-                | UnpackError::Executable
-                | UnpackError::FileType
-                | UnpackError::ZipProblem(_)
-                | UnpackError::Os(_)
-                | UnpackError::Unknown) => error!("Failed to unpack: {err:?}"),
-            },
         }
     }
     op.lock().await.finish_and_clear();
@@ -193,7 +188,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             }
         }
         if ["zip", "tar", "tar.gz"].contains(&ext) {
-            match unzip_to_dir(p, target.clone()).await {
+            match unzip_to_dir(p, target.clone()) {
                 Ok(()) => {}
                 Err(e) => {
                     return Err(UnpackError::ZipProblem(e.to_string()));

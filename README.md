@@ -32,7 +32,7 @@ points: Point distribution
 
 timeout: Program timeout(in ms)
 
-threads: Number of concurrent threads for compilation + execution
+threads: Number of concurrent threads for compilation + execution. Defaults to number of cores on current system.
 
 checker: AST or static checker. AST checker is unlikely to be implemented.
 

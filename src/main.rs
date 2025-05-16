@@ -3,6 +3,18 @@
 #![deny(clippy::nursery)]
 #![deny(clippy::cargo)]
 #![deny(clippy::restriction)]
+#![allow(
+    clippy::single_call_fn,
+    clippy::multiple_inherent_impl,
+    clippy::same_name_method,
+    clippy::question_mark_used,
+    clippy::allow_attributes_without_reason,
+    clippy::min_ident_chars,
+    clippy::arithmetic_side_effects,
+    clippy::iter_over_hash_type,
+    clippy::implicit_return,
+    clippy::single_char_lifetime_names
+)]
 use console::style;
 use indicatif_log_bridge::LogWrapper;
 use log::LevelFilter;
@@ -11,7 +23,6 @@ use log::{debug, error, info, trace, warn};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    process::exit,
 };
 use tokio::{
     fs::{File, remove_dir_all},
@@ -25,11 +36,13 @@ pub mod gui;
 pub mod lang;
 pub mod test;
 pub mod unpacker;
+use anyhow::Result;
 use checker::{IllegalExpr, check_dirs};
 use config::{CONFIG, CommandType, ConfigParams, SIMPLEOPTS, TEMPDIR, proc_args};
 
+#[expect(clippy::unwrap_used)]
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let args = &config::SIMPLEOPTS;
     let logger = env_logger::builder()
         .filter_level(match args {
@@ -44,6 +57,7 @@ async fn main() {
             _ => LevelFilter::Error,
         })
         .build();
+    #[expect(clippy::expect_used)]
     LogWrapper::new(config::MULTIPROG.lock().await.clone(), logger)
         .try_init()
         .expect("Failed to initialize logger!");
@@ -52,27 +66,34 @@ async fn main() {
     info!("Welcome to the APCS Homework tester!");
     #[cfg(feature = "gui")]
     {
-        tokio::spawn(gui::init());
-        gui::app::wait_for_config().await;
+        tokio::task::spawn_blocking(gui::init);
+        gui::app::wait_for_config();
     }
-    match &args.mode {
+    match args.mode {
         CommandType::Init => {
             info!("creating bare config file...");
             let mut f = File::create("config.toml").await.unwrap();
             let buf = toml::to_string_pretty(&ConfigParams::default()).unwrap();
+            #[expect(clippy::expect_used)]
             f.write_all(buf.as_bytes())
                 .await
                 .expect("failed to write to config!");
-            exit(0);
+            return Ok(());
         }
-        CommandType::Run | CommandType::Test | CommandType::Format => {}
+        CommandType::Run => run().await,
+        CommandType::Test | CommandType::Format => {
+            todo!("Test and format are not yet implemented!")
+        }
     }
+}
+
+async fn run() -> Result<()> {
     let config = &CONFIG;
     debug!("Config:\n{}", (*config).clone());
     let target = unpacker::unpack_dir(CONFIG.target.clone()).await;
     if target.is_empty() {
         error!("Failed to unpack files. Are you sure the Regex and file format is correct?");
-        exit(0);
+        return Ok(());
     }
     info!("Starting safety checks...");
     debug!(
@@ -80,22 +101,19 @@ async fn main() {
         target
             .iter()
             .cloned()
-            .filter_map(|el| return el.ok())
+            .filter_map(Result::ok)
             .collect::<Vec<_>>()
     );
     let check_result: HashMap<PathBuf, Vec<IllegalExpr>> =
-        check_dirs(target.iter().cloned().filter_map(|el| return el.ok()).collect())
+        check_dirs(target.iter().cloned().filter_map(Result::ok).collect())
             .await
             .unwrap()
             .iter()
-            .filter(|el| return !el.1.is_empty())
-            .map(|el| return (el.0.clone(), el.1.clone()))
+            .filter(|el| !el.1.is_empty())
+            .map(|el| (el.0.clone(), el.1.clone()))
             .collect();
     if check_result.is_empty() {
-        info!(
-            "{} All safety checks passed.",
-            style("[AC]").green().bold()
-        );
+        info!("{} All safety checks passed.", style("[AC]").green().bold());
     } else {
         warn!("Dangerous code detected.");
         for i in &check_result {
@@ -114,8 +132,10 @@ async fn main() {
         .collect();
     for i in check_result {
         let mut rem = i.0;
-        while rem.parent().unwrap().to_path_buf() != *TEMPDIR {
-            rem = rem.parent().unwrap().to_path_buf();
+        while let Some(s) = rem.parent() {
+            if s.to_path_buf() != *TEMPDIR {
+                rem = rem.parent().unwrap().to_path_buf();
+            }
         }
         exec.remove(&rem);
     }
@@ -125,7 +145,7 @@ async fn main() {
         error!(
             "None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file."
         );
-        exit(0);
+        return Ok(());
     }
     let res = test::test_dirs(exec).await;
     debug!("Results: {res:#?}");
@@ -133,20 +153,24 @@ async fn main() {
     for i in res {
         let mut acc = 0;
         for j in 0..i.1.len() {
+            #[expect(clippy::indexing_slicing)]
             if i.1[j].is_correct() {
                 acc += config.testcases[j].points;
             }
         }
+        #[expect(clippy::unwrap_used)]
         points.push((i.0.file_name().unwrap().to_str().unwrap().to_owned(), acc));
     }
-    if let Some(s) = &SIMPLEOPTS.output {
-        let mut f = File::create(s).await.unwrap();
+    if let Some(s) = SIMPLEOPTS.output.clone() {
+        let mut file = File::create(s).await?;
+        #[expect(clippy::expect_used)]
         for i in points {
-            f.write_all(&format!("{}: {}\n", i.0, i.1).into_bytes())
+            file.write_all(&format!("{}: {}\n", i.0, i.1).into_bytes())
                 .await
                 .expect("Failed to write to result file!");
         }
     } else {
+        #[expect(clippy::print_stdout)]
         for i in points {
             println!("{}: {}", i.0, i.1);
         }
@@ -154,11 +178,13 @@ async fn main() {
     #[cfg(not(feature = "gui"))]
     if !SIMPLEOPTS.artifacts {
         debug!("cleaning up...");
-        remove_dir_all(TEMPDIR.clone()).await.unwrap();
+        remove_dir_all(TEMPDIR.clone()).await?;
     }
     #[cfg(feature = "gui")]
     {
         debug!("cleaning up...");
-        remove_dir_all(TEMPDIR.clone()).await.unwrap();
+        remove_dir_all(TEMPDIR.clone()).await?;
     }
+
+    return Ok(());
 }

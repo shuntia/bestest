@@ -109,7 +109,7 @@ pub async fn check_dir(path: std::path::PathBuf) -> Result<HashMap<PathBuf, Vec<
     crate::config::get_config()?;
     if path.is_file() {
         let mut ret = HashMap::new();
-        ret.insert(path.clone(), check_file(path).await?);
+        ret.insert(path.clone(), check_file(path)?);
         return Ok(ret);
     }
     let results: Arc<Mutex<HashMap<PathBuf, Vec<IllegalExpr>>>> =
@@ -176,7 +176,7 @@ async fn changefile(
     let permit = semaphore.acquire().await?;
     results.lock().await.insert(
         dir.clone(),
-        match check_file(dir.clone()).await {
+        match check_file(dir.clone()) {
             Err(e) => {
                 error!("ERROR");
                 errs.lock().await.push((dir.clone(), e.to_string()));
@@ -189,7 +189,7 @@ async fn changefile(
     Ok(())
 }
 
-pub async fn check_file(path: std::path::PathBuf) -> Result<Vec<IllegalExpr>> {
+pub fn check_file(path: std::path::PathBuf) -> Result<Vec<IllegalExpr>> {
     debug!("checking {path:?}");
     let cfg = crate::config::get_config()?;
     match cfg.checker {

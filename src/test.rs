@@ -89,7 +89,7 @@ impl TestResult {
     }
     pub const fn get_loc(&self) -> Option<&Vec<WrongLine<usize>>> {
         match &self {
-            Self::Wrong { case: _, loc } => return Some(loc),
+            Self::Wrong { loc, .. } => return Some(loc),
             Self::Correct { .. } | Self::Error { .. } => return None,
         }
     }
@@ -143,10 +143,8 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
     let mut ret = vec![];
     for i in handles {
         let out = i.await.unwrap();
-        if out.1.is_ok() {
-            ret.push((out.0, out.1.unwrap()));
-        } else if let RunError::CE(code, reason) = out.1.unwrap_err() {
-            ret.push((
+        match out.1 {
+            Err(RunError::RE(code, reason)) => ret.push((
                 out.0,
                 vec![
                     TestResult::Error {
@@ -155,7 +153,20 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
                     };
                     CONFIG.testcases.len()
                 ],
-            ));
+            )),
+            Err(RunError::CE(code, reason)) => ret.push((
+                out.0,
+                vec![
+                    TestResult::Error {
+                        reason,
+                        code: code.unwrap()
+                    };
+                    CONFIG.testcases.len()
+                ],
+            )),
+            Ok(ok) => {
+                ret.push((out.0, ok));
+            }
         }
     }
     pass.lock().await.finish_and_clear();
@@ -189,9 +200,9 @@ pub async fn test_file_progress(
     mp: Arc<MutexGuard<'static, MultiProgress>>,
     op: Arc<Mutex<ProgressBar>>,
 ) -> (PathBuf, Result<Vec<TestResult>, RunError>) {
-    let prog = mp.add(ProgressBar::new_spinner());
+    let progress = mp.add(ProgressBar::new_spinner());
     let permit = semaphore.acquire().await.unwrap();
-    prog.set_style(
+    progress.set_style(
         ProgressStyle::default_spinner()
             .template(
                 format!(
@@ -210,8 +221,8 @@ pub async fn test_file_progress(
     let file = path.clone().clone();
     let filename = file.file_name().unwrap();
     let filenamestr = filename.to_str().unwrap().to_owned();
-    prog.set_message(filenamestr);
-    prog.enable_steady_tick(Duration::from_millis(100));
+    progress.set_message(filenamestr);
+    progress.enable_steady_tick(Duration::from_millis(100));
     match proc.prepare().await {
         Err(e) => {
             info!(
@@ -224,14 +235,14 @@ pub async fn test_file_progress(
         }
         Ok(()) => {}
     }
-    prog.finish_and_clear();
+    progress.finish_and_clear();
     info!(
         "{} {} Compiled successfully!",
         style("[OK]").green().bold(),
         path.to_str().unwrap()
     );
-    let prog = mp.add(ProgressBar::new(CONFIG.testcases.len() as u64));
-    prog.set_style(
+    let progress = mp.add(ProgressBar::new(CONFIG.testcases.len() as u64));
+    progress.set_style(
         ProgressStyle::default_bar()
             .template(
                 "{spinner} [{elapsed_precise}] {msg} running tests [{wide_bar:.bold.cyan/blue}]({pos}/{len})",
@@ -239,9 +250,9 @@ pub async fn test_file_progress(
             .unwrap()
             .progress_chars("\u{2500}\u{25b6} "),
     );
-    prog.enable_steady_tick(Duration::from_millis(50));
+    progress.enable_steady_tick(Duration::from_millis(50));
     let tc = &CONFIG.testcases;
-    prog.set_message(style("[WJ] [0/?]").dim().bold().to_string());
+    progress.set_message(style("[WJ] [0/?]").dim().bold().to_string());
     let mut ret = vec![];
     let mut correct = 0;
     for i in 0..tc.len() {
@@ -250,14 +261,14 @@ pub async fn test_file_progress(
             correct += 1;
         }
         if correct == i + 1 {
-            prog.set_message(
+            progress.set_message(
                 style(format!("[AC] [{}/{}]", correct, tc.len()))
                     .green()
                     .bold()
                     .to_string(),
             );
         } else {
-            prog.set_message(
+            progress.set_message(
                 style(format!("[NG] [{}/{}]", correct, tc.len()))
                     .red()
                     .bold()
@@ -265,12 +276,12 @@ pub async fn test_file_progress(
             );
         }
         ret.push(push);
-        prog.inc(1);
+        progress.inc(1);
     }
     drop(permit);
     op.lock().await.inc(1);
     info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
-    prog.finish_and_clear();
+    progress.finish_and_clear();
     (path, Ok(ret))
 }
 
