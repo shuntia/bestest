@@ -93,6 +93,7 @@ All: Allow all
 
 ### Command-line options
 
+```
   -v, --verbose                verbose mode
 
       --debug                  debug mode
@@ -114,6 +115,7 @@ All: Allow all
   -a, --artifacts              leave artifacts
 
   -h, --help                   Print help
+```
 
 ## Building
 
@@ -133,6 +135,12 @@ cargo build -r --features gui
 ```
 
 the binary is in `target/release`
+
+## Installation
+
+```bash
+cargo install --git https://github.com/shuntia/apcs-tester
+```
 
 > [!NOTE]
 > This program does not currently work under windows because it relies on signal sending provided by `nix`
