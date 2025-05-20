@@ -49,25 +49,45 @@ entry: entry point for the program(unnecessary for some languages, but currently
 ### Allow options
 
 FileIO: File I/O access
+
 SysAccess: Access to libraries like `sys`
+
 Runtime: Access to `Runtime` object
+
 Threading: running multiple threads
+
 Reflection: Reflecting classes
+
 ProcessExec: Execute external programs
+
 SystemCall: Invoke raw syscalls
+
 Network: Networking access
+
 Assembly: Inline assembly like `asm!()` for rust
+
 Signal: Sending arbitrary signals to external processes
+
 Process: Java's `ProcessBuilder`
+
 Unsafe: `unsafe` in rust
+
 FFI: Access to FFI
+
 Command: Access to execute commands interpreted by `sh` or `cmd`
+
 OsAccess: Access to OS-specific functions in python like `os.system()`
+
 Eval: Use of python `eval`
+
 Exec: Use of python `exec`
+
 Import: Use of external libraries
+
 Ctypes: Use of C types via FFI-like interfaces
+
 Pickle: Use of pickles in python
+
 All: Allow all
 
 
