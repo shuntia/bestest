@@ -2,6 +2,7 @@ use super::java::JavaRunner;
 use crate::{config::CONFIG, executable::Language, unpacker::find_in_dir};
 use async_trait::async_trait;
 use log::{debug, error, warn};
+#[cfg(unix)]
 use nix::sys::signal::Signal;
 use std::{
     fmt::{Display, Formatter},

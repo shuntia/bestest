@@ -309,10 +309,12 @@ pub async fn test_proc(
                 "{} has been running for too long. Killing process...",
                 path.file_name().unwrap().to_str().unwrap()
             );
+            #[cfg(unix)]
             match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
                 Err(e) => error!("failed to kill process: {e}"),
                 Ok(()) => {}
             }
+            #[cfg(target_os = "windows")]
             while !proc.running().await {}
             return TestResult::Error {
                 code: 9,

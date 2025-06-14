@@ -4,9 +4,11 @@ use core::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, warn};
 use std::fs::{self, File};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::{os::unix::fs::PermissionsExt as _, path::PathBuf};
 use tokio::fs::{copy, create_dir};
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
@@ -169,6 +171,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             #[cfg(target_os = "windows")]
             panic!("I don't know what to do!");
             // Check if file is executable
+            #[cfg(unix)]
             if p.metadata().unwrap().permissions().mode() & 0o111 != 0 {
                 error!("Received an executable file! Running it as is.");
                 todo!("Support for direct execution");

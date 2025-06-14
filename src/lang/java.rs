@@ -2,6 +2,7 @@ use super::runner::{Error, RunError, Runner};
 use crate::executable::Language;
 use async_trait::async_trait;
 use log::{debug, warn};
+#[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
 use std::{
     fs::create_dir_all,
@@ -198,6 +199,7 @@ impl Runner for JavaRunner {
         Language::Java
     }
     async fn signal(&mut self, s: Signal) -> Result<(), String> {
+        #[cfg(unix)]
         let pid = nix::unistd::Pid::from_raw(if let Some(c) = &self.process {
             c.id().unwrap() as i32
         } else {
