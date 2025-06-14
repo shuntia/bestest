@@ -206,6 +206,7 @@ impl Runner for JavaRunner {
             log::error!("tried to kill PID that does not exist!");
             return Err("tried to kill PID that does not exist".into());
         });
+        #[cfg(unix)]
         match kill(pid, s) {
             Err(e) => {
                 log::error!("failed to kill PID {pid}! error: {e}");

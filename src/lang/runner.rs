@@ -104,6 +104,7 @@ pub trait Runner: Send + Sync {
     async fn stdout(&mut self) -> Option<&mut ChildStdout>;
     async fn read_all(&mut self) -> Result<String, String>;
     async fn runtime(&self) -> Result<time::Duration, ()>;
+    #[cfg(unix)]
     async fn signal(&mut self, s: Signal) -> Result<(), String>;
     async fn exitcode(&mut self) -> Result<Option<ExitStatus>, std::io::Error>;
     async fn add_dep(&mut self, p: PathBuf) -> Result<(), String>;
