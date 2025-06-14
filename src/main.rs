@@ -15,7 +15,6 @@
     clippy::implicit_return,
     clippy::single_char_lifetime_names
 )]
-#![feature(once_wait)]
 use console::style;
 use indicatif_log_bridge::LogWrapper;
 use log::LevelFilter;
