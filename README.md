@@ -16,6 +16,8 @@ edit the configuration files
 
 Just run the program, and configure options through the GUI.
 
+It essentially does `apcs-tester init` and display that in a GUI. If you can edit the config file directly, that is more encouraged.
+
 ### Configuration
 
 lang: only supports `Guess` and `Java` for now.

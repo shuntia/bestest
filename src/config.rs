@@ -28,8 +28,8 @@ use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 fn load_config() -> Config {
     #[cfg(not(feature = "gui"))]
-    let cp: ConfigParams =
-        match ARGS.get_config().unwrap() {
+    let cp: ConfigParams = match ARGS.get_config() {
+        Some(config) => match config {
             s if s.extension().expect(
                 "File extension not found! Config format guessing is not implemented yet!",
             ) == "json" =>
@@ -50,7 +50,10 @@ fn load_config() -> Config {
             _ => {
                 panic!("File extension not found! Config format guessing is not implemented yet!");
             }
-        };
+        },
+
+        None => ConfigParams::default(),
+    };
     #[cfg(feature = "gui")]
     let cp = crate::gui::app::get_config();
     if cp.entry.is_none() {

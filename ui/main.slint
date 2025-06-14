@@ -1,8 +1,6 @@
-import { VerticalBox, HorizontalBox, LineEdit, Button, ScrollView } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, LineEdit, Button, ScrollView, SpinBox } from "std-widgets.slint";
 export component MainWindow inherits Window {
     title: "TESTER GUI";
-    width: 400px;
-    height: 400px;
     callback submit(values: [string]);
     in-out property <string> err: "";
     in-out property <string> entry: "main";
@@ -14,7 +12,7 @@ export component MainWindow inherits Window {
     in-out property <string> points: "";
     in-out property <string> timeout: "1000";
     in-out property <string> memory: "1000";
-    in-out property <string> threads: "4";
+    in-out property <int> threads: 4;
     in-out property <string> checker: "Static";
     in-out property <string> allow: "[]";
     in-out property <string> format: "[]";
@@ -26,6 +24,13 @@ export component MainWindow inherits Window {
 
     ScrollView {
         VerticalLayout {
+            Text {
+                horizontal-alignment: center;
+                font-size: 50pt;
+                padding: 20px;
+                text: "edu-verifier: GUI";
+            }
+
             if(configuring): VerticalLayout {
                 spacing: 10px;
                 padding: 20px;
@@ -139,8 +144,8 @@ export component MainWindow inherits Window {
 
                 HorizontalBox {
                     spacing: 5px;
-                    LineEdit {
-                        text: threads;
+                    SpinBox {
+                        value: threads;
                     }
                 }
 
