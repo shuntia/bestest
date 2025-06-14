@@ -314,7 +314,6 @@ pub async fn test_proc(
                 Err(e) => error!("failed to kill process: {e}"),
                 Ok(()) => {}
             }
-            #[cfg(target_os = "windows")]
             while !proc.running().await {}
             return TestResult::Error {
                 code: 9,

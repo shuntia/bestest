@@ -198,6 +198,7 @@ impl Runner for JavaRunner {
     async fn get_lang(&self) -> Language {
         Language::Java
     }
+    #[cfg(unix)]
     async fn signal(&mut self, s: Signal) -> Result<(), String> {
         #[cfg(unix)]
         let pid = nix::unistd::Pid::from_raw(if let Some(c) = &self.process {
