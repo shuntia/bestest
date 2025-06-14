@@ -59,7 +59,7 @@ pub fn launch() {
 }
 
 pub fn wait_for_config() -> &'static ConfigParams {
-    #[feature(once_wait)]
+    #![feature(once_wait)]
     CONFIG.wait()
 }
 
