@@ -449,6 +449,7 @@ impl From<Args> for SimpleOpts {
         let mut ret = Self::default();
         match value.command {
             Command::Init { silent, quiet } => {
+                ret.mode = CommandType::Init;
                 ret.quiet = quiet;
                 ret.silent = silent;
             }
@@ -513,7 +514,12 @@ impl From<Args> for SimpleOpts {
                 ret.dry_run = dry_run;
                 ret.artifacts = artifacts;
             }
-            Command::Test | Command::Format => {}
+            Command::Test => {
+                ret.mode = CommandType::Test;
+            }
+            Command::Format => {
+                ret.mode = CommandType::Format;
+            }
         }
         ret
     }
@@ -523,7 +529,8 @@ pub static ARGS: std::sync::LazyLock<Args> = std::sync::LazyLock::new(Args::pars
 #[cfg(feature = "gui")]
 pub static ARGS: Lazy<Args> = Lazy::new(Args::default);
 #[cfg(not(feature = "gui"))]
-pub static SIMPLEOPTS: std::sync::LazyLock<SimpleOpts> = std::sync::LazyLock::new(SimpleOpts::new);
+pub static SIMPLEOPTS: std::sync::LazyLock<SimpleOpts> =
+    std::sync::LazyLock::new(|| ARGS.clone().into());
 #[cfg(feature = "gui")]
 pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::default);
 
