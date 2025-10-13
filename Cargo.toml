@@ -4,32 +4,32 @@ version = "0.4.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.98"
-async-trait = "0.1.88"
-clap = { version = "4.5.27", features = ["derive"] }
-console = "0.15.11"
-env_logger = "0.11.6"
-imara-diff = "0.1.8"
-indicatif = { version = "0.17.11", features = ["improved_unicode"] }
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+clap = { version = "4.5.48", features = ["derive"] }
+console = "0.16.1"
+env_logger = "0.11.8"
+imara-diff = "0.2.0"
+indicatif = { version = "0.18.0", features = ["improved_unicode"] }
 indicatif-log-bridge = "0.2.3"
 itertools = "0.14.0"
-log = "0.4.25"
-nix = { version = "0.29.0", features = ["process", "signal"] }
-num_cpus = "1.16.0"
-once_cell = "1.20.3"
-regex = "1.11.1"
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.138"
-slint = {version="1.10.0",optional=true}
-strum = "0.27.1"
-strum_macros = "0.27.1"
-tokio = { version = "1.44.1", features = ["full"] }
-toml = "0.8.20"
+log = "0.4.28"
+nix = { version = "0.30.1", features = ["process", "signal"] }
+num_cpus = "1.17.0"
+once_cell = "1.21.3"
+regex = "1.11.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+slint = {version="1.13.1",optional=true}
+strum = "0.27.2"
+strum_macros = "0.27.2"
+tokio = { version = "1.47.1", features = ["full"] }
+toml = "0.9.7"
 walkdir = "2.5.0"
-zip = "2.4.2"
+zip = "5.1.1"
 
 [build-dependencies]
-slint-build ={version= "1.10.0",optional=true}
+slint-build ={version= "1.13.1",optional=true}
 
 [features]
 gui=["slint", "slint-build"]

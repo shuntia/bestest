@@ -2,6 +2,11 @@
 
 This is a tester program for AP computer science. It is a WIP.
 
+Mayme I want to call it pastoxide
+paratide
+gradox
+paragrad
+
 ## Usage:
 
 ### Setup

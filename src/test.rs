@@ -4,7 +4,7 @@ use crate::executable::Language;
 use crate::lang::runner::{self, RunError, Runner};
 use console::style;
 use core::{ops::Range, time::Duration};
-use imara_diff::{Algorithm, diff, intern::InternedInput};
+use imara_diff::{Algorithm, Diff, InternedInput};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
@@ -20,93 +20,54 @@ pub struct TestCase {
 }
 impl core::fmt::Display for TestCase {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        return write!(
+        write!(
             f,
             "Input: {}\nExpected Output: {}\nPoints: {}",
             self.input, self.expected, self.points
-        );
-    }
-}
-
-impl TestCase {
-    #[expect(unused)]
-    fn diff<'a>(
-        &'a self,
-        s: &'a str,
-    ) -> (Vec<&'a str>, Vec<&'a str>, (Vec<&'a str>, Vec<&'a str>)) {
-        let mut removals = Vec::new();
-        let mut insertions = Vec::new();
-        let mut replacements = Vec::new();
-        let input = InternedInput::new(self.expected.as_str(), s);
-        let sink = |before: Range<u32>, after: Range<u32>| {
-            let hunk_before: Vec<_> = input.before[before.start as usize..before.end as usize]
-                .iter()
-                .map(|&line| return input.interner[line])
-                .collect();
-            let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
-                .iter()
-                .map(|&line| return input.interner[line])
-                .collect();
-            if hunk_after.is_empty() {
-                removals.push(hunk_before);
-            } else if hunk_before.is_empty() {
-                insertions.push(hunk_after);
-            } else {
-                replacements.push((hunk_before, hunk_after));
-            }
-        };
-        diff(Algorithm::Histogram, &input, sink);
-        (
-            removals[0].clone(),
-            insertions[0].clone(),
-            replacements[0].clone(),
         )
     }
 }
 
-#[derive(Debug, Clone)]
+#[expect(clippy::module_name_repetitions)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum TestResult {
-    Correct {
-        case: &'static TestCase,
-    },
-    Wrong {
-        case: &'static TestCase,
-        loc: Vec<WrongLine<usize>>,
-    },
-    Error {
-        reason: String,
-        code: i32,
-    },
+    Correct { case: &'static TestCase },
+    Error { reason: String, code: i32 },
+    Wrong { case: &'static TestCase, loc: Diff },
+}
+
+#[expect(clippy::missing_trait_methods)]
+impl Clone for TestResult {
+    fn clone(&self) -> Self {
+        #[expect(clippy::pattern_type_mismatch)]
+        match self {
+            Self::Correct { case } => Self::Correct { case },
+            Self::Error { reason, code } => Self::Error {
+                reason: reason.clone(),
+                code: *code,
+            },
+            #[expect(clippy::panic)]
+            Self::Wrong { .. } => panic!("Tried to clone a diff."),
+        }
+    }
 }
 
 impl TestResult {
     pub const fn is_correct(&self) -> bool {
         match self {
-            Self::Correct { .. } => return true,
-            Self::Wrong { .. } | Self::Error { .. } => return false,
-        }
-    }
-    pub const fn get_loc(&self) -> Option<&Vec<WrongLine<usize>>> {
-        match &self {
-            Self::Wrong { loc, .. } => return Some(loc),
-            Self::Correct { .. } | Self::Error { .. } => return None,
+            Self::Correct { .. } => true,
+            Self::Wrong { .. } | Self::Error { .. } => false,
         }
     }
     #[must_use]
     pub fn msg(&self) -> String {
         if self.is_correct() {
-            return style("[AC]").green().bold().to_string();
+            style("[AC]").green().bold().to_string()
+        } else {
+            style("[NG]").red().bold().to_string()
         }
-        return style("[NG]").red().bold().to_string();
     }
-}
-
-#[expect(unused)]
-#[derive(Debug, Clone)]
-pub struct WrongLine<T> {
-    before: Range<T>,
-    after: (Range<T>, String),
 }
 
 pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, Vec<TestResult>)> {
@@ -183,15 +144,16 @@ pub fn print_tr_vec(tr: &Vec<TestResult>) -> String {
         }
     }
     if acc == tr.len() {
-        return style(format!("[AC][{}/{}]", acc, tr.len()))
+        style(format!("[AC][{}/{}]", acc, tr.len()))
             .bold()
             .green()
-            .to_string();
+            .to_string()
+    } else {
+        style(format!("[NG][{}/{}]", acc, tr.len()))
+            .bold()
+            .red()
+            .to_string()
     }
-    return style(format!("[NG][{}/{}]", acc, tr.len()))
-        .bold()
-        .red()
-        .to_string();
 }
 
 pub async fn test_file_progress(
@@ -223,17 +185,14 @@ pub async fn test_file_progress(
     let filenamestr = filename.to_str().unwrap().to_owned();
     progress.set_message(filenamestr);
     progress.enable_steady_tick(Duration::from_millis(100));
-    match proc.prepare().await {
-        Err(e) => {
-            info!(
-                "{} {} Compile failed!",
-                style("[CE]").bold().yellow(),
-                path.to_str().unwrap()
-            );
-            debug!("{e:#?}");
-            return (path, Err(e));
-        }
-        Ok(()) => {}
+    if let Err(e) = proc.prepare().await {
+        info!(
+            "{} {} Compile failed!",
+            style("[CE]").bold().yellow(),
+            path.to_str().unwrap()
+        );
+        debug!("{e:#?}");
+        return (path, Err(e));
     }
     progress.finish_and_clear();
     info!(
@@ -291,9 +250,8 @@ pub async fn test_proc(
     testcase: &'static TestCase,
 ) -> TestResult {
     let timeout = config::get_config().unwrap().timeout;
-    let mut wrong = vec![];
     proc.run().await.unwrap();
-    let _ = proc.read_all();
+    let _ = proc.read_all().await;
     proc.stdin(testcase.input.clone())
         .await
         .unwrap_or_else(|e| {
@@ -310,9 +268,8 @@ pub async fn test_proc(
                 path.file_name().unwrap().to_str().unwrap()
             );
             #[cfg(unix)]
-            match proc.signal(nix::sys::signal::Signal::SIGKILL).await {
-                Err(e) => error!("failed to kill process: {e}"),
-                Ok(()) => {}
+            if let Err(e) = proc.signal(nix::sys::signal::Signal::SIGKILL).await {
+                error!("failed to kill process: {e}")
             }
             while !proc.running().await {}
             return TestResult::Error {
@@ -323,25 +280,13 @@ pub async fn test_proc(
     }
     let out = proc.read_all().await.unwrap();
     let input = InternedInput::new(testcase.expected.as_str(), out.as_str());
-    let sink = |before: Range<u32>, after: Range<u32>| {
-        let hunk_after: Vec<_> = input.after[after.start as usize..after.end as usize]
-            .iter()
-            .map(|&line| return input.interner[line])
-            .collect();
-        wrong.push(WrongLine::<usize> {
-            before: before.start as usize..before.end as usize,
-            after: (
-                after.start as usize..after.end as usize,
-                hunk_after.join("\n").clone(),
-            ),
-        });
-    };
-    imara_diff::diff(Algorithm::Histogram, &input, sink);
-    if !wrong.is_empty() {
-        return TestResult::Wrong {
+    let diff = imara_diff::Diff::compute(Algorithm::Histogram, &input);
+    if diff.count_additions() + diff.count_removals() == 0 {
+        TestResult::Wrong {
             case: testcase,
-            loc: wrong,
-        };
+            loc: diff,
+        }
+    } else {
+        TestResult::Correct { case: testcase }
     }
-    return TestResult::Correct { case: testcase };
 }

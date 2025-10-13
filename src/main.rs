@@ -1,20 +1,4 @@
 #![deny(clippy::all)]
-#![deny(clippy::pedantic)]
-#![deny(clippy::nursery)]
-#![deny(clippy::cargo)]
-#![deny(clippy::restriction)]
-#![allow(
-    clippy::single_call_fn,
-    clippy::multiple_inherent_impl,
-    clippy::same_name_method,
-    clippy::question_mark_used,
-    clippy::allow_attributes_without_reason,
-    clippy::min_ident_chars,
-    clippy::arithmetic_side_effects,
-    clippy::iter_over_hash_type,
-    clippy::implicit_return,
-    clippy::single_char_lifetime_names
-)]
 use console::style;
 use indicatif_log_bridge::LogWrapper;
 use log::LevelFilter;
@@ -115,7 +99,7 @@ async fn run() -> Result<()> {
     if check_result.is_empty() {
         info!("{} All safety checks passed.", style("[AC]").green().bold());
     } else {
-        warn!("Dangerous code detected.");
+        warn!("Potentially dangerous code detected.");
         for i in &check_result {
             warn!("{i:?}");
         }
@@ -142,9 +126,7 @@ async fn run() -> Result<()> {
     info!("Starting tests...");
     debug!("Target dirs: {exec:?}");
     if exec.is_empty() {
-        error!(
-            "None passed the safety test. Are you sure you can trust your students? If so, configure it in the \"allow\" config within the config file."
-        );
+        error!("None passed the safety test. Did you configure your safety settings correctly?");
         return Ok(());
     }
     let res = test::test_dirs(exec).await;
