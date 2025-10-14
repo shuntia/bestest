@@ -31,31 +31,28 @@ impl From<PathBuf> for Language {
                 return Self::Unknown(value.as_path().to_str().unwrap().to_owned());
             }
         } {
-            "jar" | "java" => return Self::Java,
-            "cpp" => return Self::Cpp,
-            "c" => return Self::C,
-            "rs" => return Self::Rust,
-            "py" => return Self::Python,
+            "jar" | "java" => Self::Java,
+            "cpp" => Self::Cpp,
+            "c" => Self::C,
+            "rs" => Self::Rust,
+            "py" => Self::Python,
             "zip" | "tar" | "tar.gz" => {
                 if contains_in_zip(&value, "Cargo.toml").unwrap() {
-                    return Self::Rust;
+                    Self::Rust
+                } else if contains_in_zip(&value, "main.cpp").unwrap() {
+                    Self::Cpp
+                } else if contains_in_zip(&value, "main.c").unwrap() {
+                    Self::C
+                } else if contains_in_zip(&value, "main.py").unwrap() {
+                    Self::Python
+                } else if contains_in_zip(&value, "Main.java").unwrap() {
+                    Self::Java
+                } else {
+                    warn!("couldn't find entry point!");
+                    Self::Unknown(value.as_path().to_str().unwrap().to_owned())
                 }
-                if contains_in_zip(&value, "main.cpp").unwrap() {
-                    return Self::Cpp;
-                }
-                if contains_in_zip(&value, "main.c").unwrap() {
-                    return Self::C;
-                }
-                if contains_in_zip(&value, "main.py").unwrap() {
-                    return Self::Python;
-                }
-                if contains_in_zip(&value, "Main.java").unwrap() {
-                    return Self::Java;
-                }
-                warn!("couldn't find entry point!");
-                return Self::Unknown(value.as_path().to_str().unwrap().to_owned());
             }
-            _ => return Self::Unknown(value.as_path().to_str().unwrap().to_owned()),
+            _ => Self::Unknown(value.as_path().to_str().unwrap().to_owned()),
         }
     }
 }
@@ -69,7 +66,7 @@ fn contains_in_zip(p: &PathBuf, target: &str) -> ZipResult<bool> {
             return Ok(true);
         }
     }
-    return Ok(false);
+    Ok(false)
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, EnumIter, Serialize)]

@@ -1,11 +1,6 @@
-# APCS Tester
+# Bestest, the Bestest, Efficient Speedy test.
 
 This is a tester program for AP computer science. It is a WIP.
-
-Mayme I want to call it pastoxide
-paratide
-gradox
-paragrad
 
 ## Usage:
 
@@ -14,14 +9,14 @@ paragrad
 #### For CLI
 
 Navigate to your directory with cd
-run `apcs_tester init`
+run `bestest init`
 edit the configuration files
 
 #### For GUI
 
 Just run the program, and configure options through the GUI.
 
-It essentially does `apcs-tester init` and display that in a GUI. If you can edit the config file directly, that is more encouraged.
+It essentially does `bestest init` and display that in a GUI. If you can edit the config file directly, that is more encouraged.
 
 ### Configuration
 
@@ -29,7 +24,7 @@ lang: only supports `Guess` and `Java` for now.
 
 args: command-line arguments to pass to the compiler, in list format(`[]`)
 
-target: target directory. `apcs_tester init` automatically sets this for you.
+target: target directory. `bestest init` automatically sets this for you.
 
 input: List of strings that shall be passed to `stdin` for every test case
 
@@ -129,15 +124,15 @@ All: Allow all
 for CLI
 
 ```bash
-git clone https://github.com/shuntia/apcs-tester
-cd apcs-tester
+git clone https://github.com/shuntia/bestest
+cd bestest
 cargo build -r
 ```
 
 for GUI
 ```bash
-git clone https://github.com/shuntia/apcs-tester
-cd apcs-tester
+git clone https://github.com/shuntia/bestest
+cd bestest
 cargo build -r --features gui
 ```
 
@@ -146,7 +141,7 @@ the binary is in `target/release`
 ## Installation
 
 ```bash
-cargo install --git https://github.com/shuntia/apcs-tester
+cargo install --git https://github.com/shuntia/bestest
 ```
 
 > [!NOTE]

@@ -17,9 +17,11 @@ use std::fs::File;
 use std::fs::create_dir_all;
 #[cfg(not(feature = "gui"))]
 use std::io::Read as _;
+use std::num::NonZero;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::LazyLock;
+use std::thread::available_parallelism;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -64,7 +66,7 @@ fn load_config() -> Config {
         exit(1);
     }
 
-    let config = Config {
+    Config {
         entry: cp.entry.unwrap_or_else(|| "Main".into()),
         lang: Language::Guess,
         target: cp
@@ -78,20 +80,18 @@ fn load_config() -> Config {
             .zip(cp.output.unwrap_or_default().iter())
             .zip_longest(cp.points.unwrap_or_default().iter())
             .map(move |eob| match eob {
-                Both((a, b), c) => {
-                    return TestCase {
-                        input: a.to_string(),
-                        expected: b.to_string(),
-                        points: *c,
-                    };
-                }
+                Both((a, b), c) => TestCase {
+                    input: a.to_string(),
+                    expected: b.to_string(),
+                    points: *c,
+                },
                 Left((a, b)) => {
                     debug!("Found test case without any points! Falling back to zero points.");
-                    return TestCase {
+                    TestCase {
                         input: a.to_string(),
                         expected: b.to_string(),
                         points: 0,
-                    };
+                    }
                 }
                 Right(c) => {
                     error!("Points without any I/O! Did you forget to add the cases?");
@@ -106,7 +106,11 @@ fn load_config() -> Config {
         timeout: cp.timeout.unwrap_or(5),
         memory: cp.memory.unwrap_or(1024),
         #[allow(clippy::unwrap_used)]
-        threads: cp.threads.unwrap_or(num_cpus::get().try_into().unwrap()),
+        threads: cp.threads.unwrap_or(
+            available_parallelism()
+                .unwrap_or(NonZero::new(4usize).unwrap())
+                .get() as u64,
+        ),
         checker: cp.checker.unwrap_or(Type::Static),
         allow: cp.allow.unwrap_or_default(),
         format: cp.format.as_ref().map_or_else(
@@ -115,12 +119,12 @@ fn load_config() -> Config {
         ),
         orderby: cp.orderby.unwrap_or(Orderby::Id),
         dependencies: cp.dependencies.unwrap_or_default(),
-    };
-    return config;
+    }
 }
 
+#[inline]
 pub fn get_config() -> Result<&'static LazyLock<Config>> {
-    return Ok(&CONFIG);
+    Ok(&CONFIG)
 }
 
 #[must_use]
@@ -164,8 +168,9 @@ impl From<&str> for Language {
 }
 #[deprecated]
 #[must_use]
+#[inline]
 pub fn match_ext(s: &str) -> Language {
-    return Language::from(s);
+    Language::from(s)
 }
 
 pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -177,7 +182,7 @@ pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
             .as_nanos()
     );
     create_dir_all(foldername.clone()).unwrap();
-    return PathBuf::from(foldername);
+    PathBuf::from(foldername)
 });
 
 pub static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(load_config);
@@ -279,7 +284,7 @@ impl Display for Config {
         writeln!(f, "Memory: {:?}MB", self.memory)?;
         writeln!(f, "Threads: {:?}", self.threads)?;
         writeln!(f, "Checker: {:?}", self.checker)?;
-        return writeln!(f, "Allow: {:?}", self.allow);
+        writeln!(f, "Allow: {:?}", self.allow)
     }
 }
 
@@ -356,8 +361,8 @@ pub enum Command {
 impl Args {
     pub const fn get_config(&self) -> Option<&PathBuf> {
         match &self.command {
-            Command::Run { config, .. } => return config.as_ref(),
-            Command::Init { .. } | Command::Test | Command::Format => return None,
+            Command::Run { config, .. } => config.as_ref(),
+            Command::Init { .. } | Command::Test | Command::Format => None,
         }
     }
 }
@@ -439,8 +444,9 @@ impl Default for SimpleOpts {
 }
 
 impl From<Lazy<Args>> for SimpleOpts {
+    #[inline]
     fn from(value: Lazy<Args>) -> Self {
-        return value.clone().into();
+        value.clone().into()
     }
 }
 
@@ -474,42 +480,42 @@ impl From<Args> for SimpleOpts {
                 ret.quiet = quiet;
                 ret.silent = silent;
                 ret.log_level = log_level;
-                ret.config =
-                    match config {
-                        None => {
-                            debug!("Probing for test toml.");
-                            let toml: Option<PathBuf> = None;
-                            for i in env::current_dir().unwrap().read_dir().unwrap() {
-                                let res = i.unwrap();
-                                if let Some(s) = res.path().extension() {
-                                    if s == "toml" && toml.is_some() {
-                                        error!(
-                                            "apcs-tester found two tomls! Specify which one to use!"
-                                        );
-                                        panic!("failed to determine what to use.");
-                                    }
-                                }
+                ret.config = match config {
+                    None => {
+                        debug!("Probing for test toml.");
+                        let toml: Option<PathBuf> = None;
+                        for i in env::current_dir().unwrap().read_dir().unwrap() {
+                            let res = i.unwrap();
+                            if let Some(s) = res.path().extension()
+                                && s == "toml"
+                                && toml.is_some()
+                            {
+                                error!("apcs-tester found two tomls! Specify which one to use!");
+                                panic!("failed to determine what to use.");
                             }
-                            toml.map_or_else(|| {
+                        }
+                        toml.map_or_else(
+                            || {
                                 error!(
                                     "Since user did not give config, Probed for config in cd: {}",
                                     env::current_dir().unwrap().to_str().unwrap()
                                 );
                                 error!("However, failed to find a toml file.");
                                 panic!("failed to find config.");
-                            }, |s| s)
+                            },
+                            |s| s,
+                        )
+                    }
+                    Some(p) => {
+                        if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml") {
+                            error!(
+                                "Unrecognized file format or illegal path: {}",
+                                p.to_str().unwrap()
+                            );
                         }
-                        Some(p) => {
-                            if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml")
-                            {
-                                error!(
-                                    "Unrecognized file format or illegal path: {}",
-                                    p.to_str().unwrap()
-                                );
-                            }
-                            p
-                        }
-                    };
+                        p
+                    }
+                };
                 ret.output = output;
                 ret.dry_run = dry_run;
                 ret.artifacts = artifacts;
@@ -604,14 +610,14 @@ pub fn proc_args() {
 }
 
 pub static MULTIPROG: std::sync::LazyLock<Mutex<MultiProgress>> = std::sync::LazyLock::new(|| {
-    return Mutex::new(MultiProgress::with_draw_target(ProgressDrawTarget::stdout()));
+    Mutex::new(MultiProgress::with_draw_target(ProgressDrawTarget::stdout()))
 });
 
-pub const KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    return [
+pub static KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    [
         "java", "jar", "c", "cpp", "rs", "py", "tar", "tar.gz", "gz", "zip",
     ]
-    .into();
+    .into()
 });
 
 // Spinner only properly displays if you have nerd fonts installed.

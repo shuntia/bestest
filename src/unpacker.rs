@@ -234,5 +234,5 @@ pub fn find_in_dir(p: &PathBuf, target: &str) -> Option<PathBuf> {
             return Some(e.unwrap().into_path());
         }
     }
-    return None;
+    None
 }

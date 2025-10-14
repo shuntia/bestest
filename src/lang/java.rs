@@ -90,8 +90,7 @@ impl Runner for JavaRunner {
                 .unwrap()
                 .write_all(input.as_bytes())
                 .await
-                .map_err(|e| format!("{e}"))
-                .map(|()| ()),
+                .map_err(|e| format!("{e}")),
             None => Err("Process has not started yet!".into()),
         }
     }
@@ -208,12 +207,9 @@ impl Runner for JavaRunner {
             return Err("tried to kill PID that does not exist".into());
         });
         #[cfg(unix)]
-        match kill(pid, s) {
-            Err(e) => {
-                log::error!("failed to kill PID {pid}! error: {e}");
-                return Err(e.to_string());
-            }
-            Ok(()) => {}
+        if let Err(e) = kill(pid, s) {
+            log::error!("failed to kill PID {pid}! error: {e}");
+            return Err(e.to_string());
         }
         Ok(())
     }

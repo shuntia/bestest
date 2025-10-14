@@ -172,5 +172,5 @@ async fn run() -> Result<()> {
         remove_dir_all(TEMPDIR.clone()).await?;
     }
 
-    return Ok(());
+    Ok(())
 }

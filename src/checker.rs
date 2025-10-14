@@ -43,7 +43,7 @@ pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<Ille
                         .map_or("java", |s| s.to_str().unwrap()),
                 )
             })
-            .filter(|el| return el.as_ref().unwrap().path().is_file())
+            .filter(|el| el.as_ref().unwrap().path().is_file())
         {
             entries.push(entry?.into_path());
         }
@@ -234,16 +234,14 @@ pub mod static_check {
                 }
             });
         }
-        let prohibited: Vec<Allow> = Allow::iter()
-            .filter(|el| return !allowed.contains(el))
-            .collect();
+        let prohibited: Vec<Allow> = Allow::iter().filter(|el| !allowed.contains(el)).collect();
         let mut prohibited_str: Vec<(Allow, &str)> = Vec::new();
         for i in &prohibited {
             for j in i.get_prohibited(&lang.clone()) {
                 prohibited_str.push((i.clone(), j));
             }
         }
-        let mut f = File::open(&path)?;
+        let mut f = File::open(path)?;
         let mut s: String = String::new();
         let _ = f.read_to_string(&mut s);
         let mut illegal: Vec<(usize, Allow)> = vec![];
@@ -333,30 +331,30 @@ pub mod static_check {
                     ret.push(i);
                 }
             }
-            return ret;
+            ret
         }
         fn get_prohibited(&self, lang: &Language) -> Vec<&'static str> {
             match lang {
-                Language::Unknown(_) | Language::Guess => return vec![],
+                Language::Unknown(_) | Language::Guess => vec![],
                 Language::C => match &self {
                     Self::SystemCall => {
-                        return vec![
+                        vec![
                             "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
                             "execle", "execv", "execvp", "execve",
-                        ];
+                        ]
                     }
-                    Self::FileIO => return vec!["fopen", "fread", "fwrite", "fclose"],
-                    Self::Network => return vec!["socket", "bind", "connect", "recv", "send"],
-                    Self::Assembly => return vec!["asm", "__asm__"],
-                    Self::Signal => return vec!["signal", "raise"],
-                    Self::Process => return vec!["wait", "waitpid"],
+                    Self::FileIO => vec!["fopen", "fread", "fwrite", "fclose"],
+                    Self::Network => vec!["socket", "bind", "connect", "recv", "send"],
+                    Self::Assembly => vec!["asm", "__asm__"],
+                    Self::Signal => vec!["signal", "raise"],
+                    Self::Process => vec!["wait", "waitpid"],
                     Self::All => {
-                        return vec![
+                        vec![
                             "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
                             "execle", "execv", "execvp", "execve", "fopen", "fread", "fwrite",
                             "fclose", "socket", "bind", "connect", "recv", "send", "asm",
                             "__asm__", "signal", "raise", "wait", "waitpid",
-                        ];
+                        ]
                     }
                     Self::SysAccess
                     | Self::Runtime
@@ -372,27 +370,27 @@ pub mod static_check {
                     | Self::Import
                     | Self::Ctypes
                     | Self::Pickle
-                    | Self::Unknown => return vec![],
+                    | Self::Unknown => vec![],
                 },
                 Language::Cpp => match &self {
                     Self::SystemCall => {
-                        return vec![
+                        vec![
                             "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
                             "execle", "execv", "execvp", "execve",
-                        ];
+                        ]
                     }
-                    Self::FileIO => return vec!["fopen", "fread", "fwrite", "fclose"],
-                    Self::Network => return vec!["socket", "bind", "connect", "recv", "send"],
-                    Self::Assembly => return vec!["asm", "__asm__"],
-                    Self::Signal => return vec!["signal", "raise"],
-                    Self::Process => return vec!["wait", "waitpid"],
+                    Self::FileIO => vec!["fopen", "fread", "fwrite", "fclose"],
+                    Self::Network => vec!["socket", "bind", "connect", "recv", "send"],
+                    Self::Assembly => vec!["asm", "__asm__"],
+                    Self::Signal => vec!["signal", "raise"],
+                    Self::Process => vec!["wait", "waitpid"],
                     Self::All => {
-                        return vec![
+                        vec![
                             "fork", "exec", "system", "popen", "vfork", "execl", "execlp",
                             "execle", "execv", "execvp", "execve", "fopen", "fread", "fwrite",
                             "fclose", "socket", "bind", "connect", "recv", "send", "asm",
                             "__asm__", "signal", "raise", "wait", "waitpid",
-                        ];
+                        ]
                     }
                     Self::SysAccess
                     | Self::Runtime
@@ -408,19 +406,19 @@ pub mod static_check {
                     | Self::Import
                     | Self::Ctypes
                     | Self::Pickle
-                    | Self::Unknown => return vec![],
+                    | Self::Unknown => vec![],
                 },
 
                 Language::Rust => match &self {
-                    Self::Unsafe => return vec!["unsafe"],
-                    Self::FileIO => return vec!["std::fs::File", "std::io"],
-                    Self::Network => return vec!["std::net", "TcpStream", "UdpSocket"],
-                    Self::Threading => return vec!["std::thread"],
-                    Self::FFI => return vec!["extern", "libc", "std::os::unix::process::Command"],
-                    Self::Command => return vec!["std::process::Command"],
-                    Self::Reflection => return vec!["reflect"],
+                    Self::Unsafe => vec!["unsafe"],
+                    Self::FileIO => vec!["std::fs::File", "std::io"],
+                    Self::Network => vec!["std::net", "TcpStream", "UdpSocket"],
+                    Self::Threading => vec!["std::thread"],
+                    Self::FFI => vec!["extern", "libc", "std::os::unix::process::Command"],
+                    Self::Command => vec!["std::process::Command"],
+                    Self::Reflection => vec!["reflect"],
                     Self::All => {
-                        return vec![
+                        vec![
                             "unsafe",
                             "std::fs::File",
                             "std::io",
@@ -433,7 +431,7 @@ pub mod static_check {
                             "std::os::unix::process::Command",
                             "std::process::Command",
                             "reflection",
-                        ];
+                        ]
                     }
                     Self::SysAccess
                     | Self::Runtime
@@ -448,20 +446,20 @@ pub mod static_check {
                     | Self::Import
                     | Self::Ctypes
                     | Self::Pickle
-                    | Self::Unknown => return vec![],
+                    | Self::Unknown => vec![],
                 },
                 Language::Python => match &self {
-                    Self::OsAccess => return vec!["os.system", "os.popen"],
-                    Self::Eval => return vec!["eval("],
-                    Self::Exec => return vec!["exec("],
-                    Self::FileIO => return vec!["open("],
-                    Self::Threading => return vec!["threading.Thread"],
-                    Self::Network => return vec!["socket", "requests.get", "urllib", "subprocess"],
-                    Self::Import => return vec!["__import__"],
-                    Self::Ctypes => return vec!["ctypes"],
-                    Self::Pickle => return vec!["pickle.loads", "pickle.dumps"],
+                    Self::OsAccess => vec!["os.system", "os.popen"],
+                    Self::Eval => vec!["eval("],
+                    Self::Exec => vec!["exec("],
+                    Self::FileIO => vec!["open("],
+                    Self::Threading => vec!["threading.Thread"],
+                    Self::Network => vec!["socket", "requests.get", "urllib", "subprocess"],
+                    Self::Import => vec!["__import__"],
+                    Self::Ctypes => vec!["ctypes"],
+                    Self::Pickle => vec!["pickle.loads", "pickle.dumps"],
                     Self::All => {
-                        return vec![
+                        vec![
                             "os.system",
                             "os.popen",
                             "eval(",
@@ -476,7 +474,7 @@ pub mod static_check {
                             "ctypes",
                             "pickle.loads",
                             "pickle.dumps",
-                        ];
+                        ]
                     }
                     Self::SysAccess
                     | Self::Runtime
@@ -489,47 +487,47 @@ pub mod static_check {
                     | Self::Unsafe
                     | Self::FFI
                     | Self::Command
-                    | Self::Unknown => return vec![],
+                    | Self::Unknown => vec![],
                 },
                 Language::Java => match &self {
                     Self::FileIO => {
-                        return vec![
+                        vec![
                             "java.io.FileInputStream",
                             "java.io.FileOutputStream",
                             "java.io.FileReader",
                             "java.io.FileWriter",
-                        ];
+                        ]
                     }
                     Self::SysAccess => {
-                        return vec![
+                        vec![
                             "System.exit",
                             "System.setSecurityManager",
                             "SecurityManager",
                             "checkPermission",
-                        ];
+                        ]
                     }
                     Self::Runtime => {
-                        return vec![
+                        vec![
                             "Runtime",
                             "Runtime.exec",
                             "Runtime.getRuntime",
                             "runtimeexec",
-                        ];
+                        ]
                     }
-                    Self::Threading => return vec!["Thread", "Thread.start"],
+                    Self::Threading => vec!["Thread", "Thread.start"],
                     Self::Reflection => {
-                        return vec![
+                        vec![
                             "reflect",
                             "Class.forName",
                             "Class.getDeclaredMethod",
                             "Class.getMethod",
                             "setAccessible",
                             "invoke",
-                        ];
+                        ]
                     }
-                    Self::ProcessExec => return vec!["ProcessBuilder", "Runtime.exec"],
+                    Self::ProcessExec => vec!["ProcessBuilder", "Runtime.exec"],
                     Self::All => {
-                        return vec![
+                        vec![
                             "java.io.FileInputStream",
                             "java.io.FileOutputStream",
                             "java.io.FileReader",
@@ -551,7 +549,7 @@ pub mod static_check {
                             "setAccessible",
                             "invoke",
                             "ProcessBuilder",
-                        ];
+                        ]
                     }
                     Self::SystemCall
                     | Self::Network
@@ -567,7 +565,7 @@ pub mod static_check {
                     | Self::Import
                     | Self::Ctypes
                     | Self::Pickle
-                    | Self::Unknown => return vec![],
+                    | Self::Unknown => vec![],
                 },
             }
         }

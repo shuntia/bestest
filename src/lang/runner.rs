@@ -19,16 +19,17 @@ pub struct Error {
     pub description: String,
 }
 impl Error {
-    #[must_use]
+    #[inline]
     pub fn new(description: &'static str) -> Self {
-        return Self {
+        Self {
             description: description.into(),
-        };
+        }
     }
 }
 impl Display for Error {
+    #[inline]
     fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-        return write!(f, "error: {}", self.description);
+        write!(f, "error: {}", self.description)
     }
 }
 
@@ -66,7 +67,7 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
                         .next()
                         .unwrap()
                         .ok()
-                        .map(|el| return el.path())
+                        .map(|el| el.path())
                         .unwrap()
                 }
             }
