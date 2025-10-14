@@ -1,6 +1,6 @@
 [package]
-name = "apcs_tester"
-version = "0.4.0"
+name = "bestest"
+version = "0.1.0"
 edition = "2024"
 license="MIT OR Apache-2.0"
 description="The Bestest Efficient Speedy Tester."
