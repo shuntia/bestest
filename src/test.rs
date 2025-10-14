@@ -2,11 +2,12 @@ use crate::config;
 use crate::config::{CONFIG, MULTIPROG};
 use crate::executable::Language;
 use crate::lang::runner::{self, RunError, Runner};
+use anyhow::{Context, Result};
 use console::style;
 use core::time::Duration;
 use imara_diff::{Algorithm, Diff, InternedInput};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,22 +38,6 @@ pub enum TestResult {
     Wrong { case: &'static TestCase, loc: Diff },
 }
 
-#[expect(clippy::missing_trait_methods)]
-impl Clone for TestResult {
-    fn clone(&self) -> Self {
-        #[expect(clippy::pattern_type_mismatch)]
-        match self {
-            Self::Correct { case } => Self::Correct { case },
-            Self::Error { reason, code } => Self::Error {
-                reason: reason.clone(),
-                code: *code,
-            },
-            #[expect(clippy::panic)]
-            Self::Wrong { .. } => panic!("Tried to clone a diff."),
-        }
-    }
-}
-
 impl TestResult {
     pub const fn is_correct(&self) -> bool {
         match self {
@@ -70,14 +55,19 @@ impl TestResult {
     }
 }
 
-pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, Vec<TestResult>)> {
-    let max_threads = config::get_config().unwrap().threads;
+pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
+    p: T,
+) -> Result<Vec<(PathBuf, Vec<TestResult>)>> {
+    let cfg = config::get_config()?;
+    let max_threads = cfg.threads.max(1);
     let semaphore = Arc::new(Semaphore::new(
-        usize::try_from(max_threads).expect("REASON"),
+        usize::try_from(max_threads).context("thread count exceeds usize range")?,
     ));
     let mut handles = vec![];
     let mp = MULTIPROG.lock().await;
-    let _ = mp.clear();
+    if let Err(e) = mp.clear() {
+        warn!("Failed to clear progress bars: {e}");
+    }
     let v = p.into_iter().collect::<Vec<PathBuf>>();
     let op = mp.add(ProgressBar::new(v.len() as u64));
     op.set_style(
@@ -94,37 +84,37 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
     for i in &v {
         handles.push(tokio::task::spawn(test_file_progress(
             i.clone(),
-            Arc::<tokio::sync::Semaphore>::clone(&semaphore),
-            Arc::<tokio::sync::MutexGuard<'_, indicatif::MultiProgress>>::clone(&arcmp),
-            Arc::<tokio::sync::Mutex<indicatif::ProgressBar>>::clone(&pass),
+            Arc::clone(&semaphore),
+            Arc::clone(&arcmp),
+            Arc::clone(&pass),
         )));
     }
     drop(arcmp);
     debug!("Processing: {v:#?}");
     let mut ret = vec![];
-    for i in handles {
-        let out = i.await.unwrap();
+    for handle in handles {
+        let out = handle.await.context("Test task panicked")?;
         match out.1 {
-            Err(RunError::RE(code, reason)) => ret.push((
-                out.0,
-                vec![
-                    TestResult::Error {
-                        reason,
-                        code: code.unwrap()
-                    };
-                    CONFIG.testcases.len()
-                ],
-            )),
-            Err(RunError::CE(code, reason)) => ret.push((
-                out.0,
-                vec![
-                    TestResult::Error {
-                        reason,
-                        code: code.unwrap()
-                    };
-                    CONFIG.testcases.len()
-                ],
-            )),
+            Err(RunError::RE(code, reason)) => {
+                let code_value = code.unwrap_or(-1);
+                let errors = (0..CONFIG.testcases.len())
+                    .map(|_| TestResult::Error {
+                        reason: reason.clone(),
+                        code: code_value,
+                    })
+                    .collect::<Vec<_>>();
+                ret.push((out.0, errors));
+            }
+            Err(RunError::CE(code, reason)) => {
+                let code_value = code.unwrap_or(-1);
+                let errors = (0..CONFIG.testcases.len())
+                    .map(|_| TestResult::Error {
+                        reason: reason.clone(),
+                        code: code_value,
+                    })
+                    .collect::<Vec<_>>();
+                ret.push((out.0, errors));
+            }
             Ok(ok) => {
                 ret.push((out.0, ok));
             }
@@ -132,7 +122,7 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(p: T) -> Vec<(PathBuf, V
     }
     pass.lock().await.finish_and_clear();
     info!("All tests complete.");
-    ret
+    Ok(ret)
 }
 
 #[must_use]
@@ -163,33 +153,46 @@ pub async fn test_file_progress(
     op: Arc<Mutex<ProgressBar>>,
 ) -> (PathBuf, Result<Vec<TestResult>, RunError>) {
     let progress = mp.add(ProgressBar::new_spinner());
-    let permit = semaphore.acquire().await.unwrap();
-    progress.set_style(
-        ProgressStyle::default_spinner()
-            .template(
-                format!(
-                    "{{spinner}} [{{elapsed_precise}}] {} compiling {{msg}}",
-                    style("[WJ]").dim().bold()
-                )
-                .as_str(),
-            )
-            .unwrap()
-            .tick_strings(&config::SPINNER),
+    let permit = match semaphore.acquire().await {
+        Ok(permit) => permit,
+        Err(e) => {
+            error!("Failed to acquire semaphore: {e}");
+            return (
+                path,
+                Err(RunError::CE(None, format!("Semaphore closed: {e}"))),
+            );
+        }
+    };
+    let spinner_template = format!(
+        "{{spinner}} [{{elapsed_precise}}] {} compiling {{msg}}",
+        style("[WJ]").dim().bold()
     );
+    let spinner_style = ProgressStyle::default_spinner()
+        .template(&spinner_template)
+        .unwrap_or_else(|err| {
+            warn!("Failed to configure spinner progress style: {err}");
+            ProgressStyle::default_spinner()
+        })
+        .tick_strings(&config::SPINNER);
+    progress.set_style(spinner_style);
     let mut proc = match runner::from_dir(path.clone(), Some(Language::Java)).await {
         Some(s) => s,
         None => return (path, Err(RunError::CE(None, "Unknown".into()))),
     };
-    let file = path.clone().clone();
-    let filename = file.file_name().unwrap();
-    let filenamestr = filename.to_str().unwrap().to_owned();
-    progress.set_message(filenamestr);
+    let Some(filenamestr) = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+    else {
+        return (path, Err(RunError::CE(None, "Invalid filename".into())));
+    };
+    progress.set_message(filenamestr.clone());
     progress.enable_steady_tick(Duration::from_millis(100));
     if let Err(e) = proc.prepare().await {
         info!(
             "{} {} Compile failed!",
             style("[CE]").bold().yellow(),
-            path.to_str().unwrap()
+            path.display()
         );
         debug!("{e:#?}");
         return (path, Err(e));
@@ -198,17 +201,19 @@ pub async fn test_file_progress(
     info!(
         "{} {} Compiled successfully!",
         style("[OK]").green().bold(),
-        path.to_str().unwrap()
+        path.display()
     );
     let progress = mp.add(ProgressBar::new(CONFIG.testcases.len() as u64));
-    progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{spinner} [{elapsed_precise}] {msg} running tests [{wide_bar:.bold.cyan/blue}]({pos}/{len})",
-            )
-            .unwrap()
-            .progress_chars("\u{2500}\u{25b6} "),
-    );
+    let bar_style = ProgressStyle::default_bar()
+        .template(
+            "{spinner} [{elapsed_precise}] {msg} running tests [{wide_bar:.bold.cyan/blue}]({pos}/{len})",
+        )
+        .unwrap_or_else(|err| {
+            warn!("Failed to configure bar progress style: {err}");
+            ProgressStyle::default_bar()
+        })
+        .progress_chars("\u{2500}\u{25b6} ");
+    progress.set_style(bar_style);
     progress.enable_steady_tick(Duration::from_millis(50));
     let tc = &CONFIG.testcases;
     progress.set_message(style("[WJ] [0/?]").dim().bold().to_string());
@@ -239,7 +244,7 @@ pub async fn test_file_progress(
     }
     drop(permit);
     op.lock().await.inc(1);
-    info!("{} {}", print_tr_vec(&ret), path.clone().to_str().unwrap());
+    info!("{} {}", print_tr_vec(&ret), path.display());
     progress.finish_and_clear();
     (path, Ok(ret))
 }
@@ -249,45 +254,72 @@ pub async fn test_proc(
     proc: &mut Box<dyn Runner>,
     testcase: &'static TestCase,
 ) -> TestResult {
-    let timeout = config::get_config().unwrap().timeout;
-    proc.run().await.unwrap();
-    proc.stdin(testcase.input.clone())
-        .await
-        .unwrap_or_else(|e| {
-            error!(
-                "failed to input stdin for process: {}",
-                &path.to_string_lossy()
-            );
-            error!("Reason: {e}")
-        });
+    let timeout = match config::get_config() {
+        Ok(cfg) => cfg.timeout,
+        Err(e) => {
+            error!("Failed to load configuration: {e}");
+            return TestResult::Error {
+                code: -1,
+                reason: format!("configuration error: {e}"),
+            };
+        }
+    };
+    if let Err(e) = proc.run().await {
+        let (code, reason) = match e {
+            RunError::CE(code, reason) | RunError::RE(code, reason) => (code.unwrap_or(-1), reason),
+        };
+        return TestResult::Error { code, reason };
+    }
+    if let Err(e) = proc.stdin(testcase.input.clone()).await {
+        let reason = format!(
+            "failed to input stdin for process {}: {e}",
+            path.to_string_lossy()
+        );
+        error!("{reason}");
+        return TestResult::Error { code: -1, reason };
+    }
     if tokio::time::timeout(Duration::from_millis(timeout), proc.wait())
         .await
         .is_err()
     {
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("<unknown>");
         info!(
             "{} has been running for too long. Killing process...",
-            path.file_name().unwrap().to_str().unwrap()
+            filename
         );
         #[cfg(unix)]
         if let Err(e) = proc.signal(nix::sys::signal::Signal::SIGKILL).await {
             error!("failed to kill process: {e}")
         }
-        while !proc.running().await {}
+        while proc.running().await {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         return TestResult::Error {
             code: 9,
             reason: "Timed out.".into(),
         };
     }
 
-    let out = proc.read_all().await.unwrap();
+    let out = match proc.read_all().await {
+        Ok(data) => data,
+        Err(e) => {
+            return TestResult::Error {
+                code: -1,
+                reason: format!("failed to read stdout: {e}"),
+            };
+        }
+    };
     let input = InternedInput::new(testcase.expected.as_str(), out.as_str());
     let diff = imara_diff::Diff::compute(Algorithm::Histogram, &input);
     if diff.count_additions() + diff.count_removals() == 0 {
+        TestResult::Correct { case: testcase }
+    } else {
         TestResult::Wrong {
             case: testcase,
             loc: diff,
         }
-    } else {
-        TestResult::Correct { case: testcase }
     }
 }

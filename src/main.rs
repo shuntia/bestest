@@ -20,32 +20,31 @@ pub mod gui;
 pub mod lang;
 pub mod test;
 pub mod unpacker;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use checker::{IllegalExpr, check_dirs};
 use config::{CONFIG, CommandType, ConfigParams, SIMPLEOPTS, TEMPDIR, proc_args};
 
-#[expect(clippy::unwrap_used)]
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = &config::SIMPLEOPTS;
+    let raw_args = &*config::ARGS;
     let logger = env_logger::builder()
-        .filter_level(match args {
-            _ if args.trace => LevelFilter::Trace,
-            _ if args.debug => LevelFilter::Debug,
-            _ if args.verbose => LevelFilter::Info,
-            _ if args.quiet => LevelFilter::Error,
-            _ if args.silent => LevelFilter::Off,
+        .filter_level(match raw_args {
+            _ if raw_args.trace => LevelFilter::Trace,
+            _ if raw_args.debug => LevelFilter::Debug,
+            _ if raw_args.verbose => LevelFilter::Info,
+            _ if raw_args.quiet => LevelFilter::Error,
+            _ if raw_args.silent => LevelFilter::Off,
             #[cfg(debug_assertions)]
             _ => LevelFilter::Trace,
             #[cfg(not(debug_assertions))]
             _ => LevelFilter::Error,
         })
         .build();
-    #[expect(clippy::expect_used)]
     LogWrapper::new(config::MULTIPROG.lock().await.clone(), logger)
         .try_init()
-        .expect("Failed to initialize logger!");
+        .context("Failed to initialize logger")?;
     debug!("logger started!");
+    let args = &config::SIMPLEOPTS;
     proc_args();
     info!("Welcome to the APCS Homework tester!");
     #[cfg(feature = "gui")]
@@ -56,12 +55,14 @@ async fn main() -> Result<()> {
     match args.mode {
         CommandType::Init => {
             info!("creating bare config file...");
-            let mut f = File::create("config.toml").await.unwrap();
-            let buf = toml::to_string_pretty(&ConfigParams::default()).unwrap();
-            #[expect(clippy::expect_used)]
+            let mut f = File::create("config.toml")
+                .await
+                .context("failed to create config.toml")?;
+            let buf = toml::to_string_pretty(&ConfigParams::default())
+                .context("failed to serialize default config")?;
             f.write_all(buf.as_bytes())
                 .await
-                .expect("failed to write to config!");
+                .context("failed to write default config")?;
             return Ok(());
         }
         CommandType::Run => run().await,
@@ -90,8 +91,7 @@ async fn run() -> Result<()> {
     );
     let check_result: HashMap<PathBuf, Vec<IllegalExpr>> =
         check_dirs(target.iter().cloned().filter_map(Result::ok).collect())
-            .await
-            .unwrap()
+            .await?
             .iter()
             .filter(|el| !el.1.is_empty())
             .map(|el| (el.0.clone(), el.1.clone()))
@@ -109,17 +109,21 @@ async fn run() -> Result<()> {
         );
     }
     // get the executables and remove dangerous files.
-    let mut exec: HashSet<PathBuf> = TEMPDIR
+    let mut exec: HashSet<PathBuf> = HashSet::new();
+    for entry in TEMPDIR
         .read_dir()
-        .unwrap()
-        .map(|el| el.unwrap().path())
-        .collect();
+        .context("failed to read temporary directory")?
+    {
+        let dir_entry = entry.context("failed to iterate temporary directory entry")?;
+        exec.insert(dir_entry.path());
+    }
     for i in check_result {
         let mut rem = i.0;
-        while let Some(s) = rem.parent() {
-            if s.to_path_buf() != *TEMPDIR {
-                rem = rem.parent().unwrap().to_path_buf();
+        while let Some(parent) = rem.parent() {
+            if parent == TEMPDIR.as_path() {
+                break;
             }
+            rem = parent.to_path_buf();
         }
         exec.remove(&rem);
     }
@@ -129,7 +133,7 @@ async fn run() -> Result<()> {
         error!("None passed the safety test. Did you configure your safety settings correctly?");
         return Ok(());
     }
-    let res = test::test_dirs(exec).await;
+    let res = test::test_dirs(exec).await?;
     debug!("Results: {res:#?}");
     let mut points = vec![];
     for i in res {
@@ -140,16 +144,22 @@ async fn run() -> Result<()> {
                 acc += config.testcases[j].points;
             }
         }
-        #[expect(clippy::unwrap_used)]
-        points.push((i.0.file_name().unwrap().to_str().unwrap().to_owned(), acc));
+        let Some(file_name) =
+            i.0.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        else {
+            warn!("Skipping entry with invalid filename: {:?}", i.0);
+            continue;
+        };
+        points.push((file_name, acc));
     }
     if let Some(s) = SIMPLEOPTS.output.clone() {
         let mut file = File::create(s).await?;
-        #[expect(clippy::expect_used)]
         for i in points {
-            file.write_all(&format!("{}: {}\n", i.0, i.1).into_bytes())
+            file.write_all(format!("{}: {}\n", i.0, i.1).as_bytes())
                 .await
-                .expect("Failed to write to result file!");
+                .context("failed to write to result file")?;
         }
     } else {
         #[expect(clippy::print_stdout)]

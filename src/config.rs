@@ -1,10 +1,9 @@
 use crate::checker::{self, Type};
 use crate::executable::Language;
 use crate::test::TestCase;
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use core::fmt::{Display, Formatter};
-use core::str::FromStr as _;
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use itertools::EitherOrBoth::{Both, Left, Right};
 use itertools::Itertools as _;
@@ -17,7 +16,6 @@ use std::fs::File;
 use std::fs::create_dir_all;
 #[cfg(not(feature = "gui"))]
 use std::io::Read as _;
-use std::num::NonZero;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::LazyLock;
@@ -25,34 +23,62 @@ use std::thread::available_parallelism;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-#[expect(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 fn load_config() -> Config {
     #[cfg(not(feature = "gui"))]
     let cp: ConfigParams = match ARGS.get_config() {
-        Some(config) => match config {
-            s if s.extension().expect(
-                "File extension not found! Config format guessing is not implemented yet!",
-            ) == "json" =>
-            {
-                serde_json::from_reader(File::open(s).unwrap())
-                    .expect("Illegal config! Failed to parse JSON!")
+        Some(config_path) => {
+            let ext = config_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            match ext.as_str() {
+                "json" => match File::open(config_path) {
+                    Ok(file) => match serde_json::from_reader(file) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            error!("Failed to parse JSON config {config_path:?}: {e}");
+                            ConfigParams::default()
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to open config file {config_path:?}: {e}");
+                        ConfigParams::default()
+                    }
+                },
+                "toml" => {
+                    let mut contents = String::new();
+                    match File::open(config_path) {
+                        Ok(mut file) => {
+                            if let Err(e) = file.read_to_string(&mut contents) {
+                                error!("Failed to read config file {config_path:?}: {e}");
+                                ConfigParams::default()
+                            } else {
+                                match toml::from_str(contents.as_str()) {
+                                    Ok(cfg) => cfg,
+                                    Err(e) => {
+                                        error!("Failed to parse TOML config {config_path:?}: {e}");
+                                        ConfigParams::default()
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to open config file {config_path:?}: {e}");
+                            ConfigParams::default()
+                        }
+                    }
+                }
+                _ => {
+                    error!(
+                        "Unsupported config extension for {config_path:?}. Falling back to defaults."
+                    );
+                    ConfigParams::default()
+                }
             }
-            s if s.extension().expect(
-                "File extension not found! Config format guessing is not implemented yet!",
-            ) == "toml" =>
-            {
-                let mut string = String::new();
-                let _ = File::open(s)
-                    .expect("Config does not exist in specified location!")
-                    .read_to_string(&mut string);
-                toml::from_str(string.as_str()).expect("Illegal config! Failed to parse TOML!")
-            }
-            _ => {
-                panic!("File extension not found! Config format guessing is not implemented yet!");
-            }
-        },
+        }
 
         None => ConfigParams::default(),
     };
@@ -69,9 +95,13 @@ fn load_config() -> Config {
     Config {
         entry: cp.entry.unwrap_or_else(|| "Main".into()),
         lang: Language::Guess,
-        target: cp
-            .target
-            .unwrap_or_else(|| std::env::current_dir().unwrap()),
+        target: cp.target.unwrap_or_else(|| match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                warn!("Failed to obtain current directory: {e}");
+                PathBuf::from(".")
+            }
+        }),
         args: cp.args.unwrap_or_default(),
         testcases: cp
             .input
@@ -105,12 +135,14 @@ fn load_config() -> Config {
             .collect(),
         timeout: cp.timeout.unwrap_or(5),
         memory: cp.memory.unwrap_or(1024),
-        #[allow(clippy::unwrap_used)]
-        threads: cp.threads.unwrap_or(
-            available_parallelism()
-                .unwrap_or(NonZero::new(4usize).unwrap())
-                .get() as u64,
-        ),
+        threads: cp
+            .threads
+            .unwrap_or_else(|| {
+                available_parallelism()
+                    .map(|nz| nz.get() as u64)
+                    .unwrap_or(4)
+            })
+            .max(1),
         checker: cp.checker.unwrap_or(Type::Static),
         allow: cp.allow.unwrap_or_default(),
         format: cp.format.as_ref().map_or_else(
@@ -127,8 +159,7 @@ pub fn get_config() -> Result<&'static LazyLock<Config>> {
     Ok(&CONFIG)
 }
 
-#[must_use]
-pub fn generate_regex(format: &str) -> Regex {
+pub fn generate_regex(format: &str) -> Result<Regex, regex::Error> {
     // Predefined placeholders and their regex patterns
     let placeholders = HashMap::from([
         ("name", "(?P<name>[a-zA-Z][a-zA-Z0-9_]*)"), // Starts with a letter, allows alnum + underscore
@@ -150,7 +181,7 @@ pub fn generate_regex(format: &str) -> Regex {
     // Escape the dot (.) for file extensions
     pattern = pattern.replace('.', "\\.");
 
-    Regex::new(&format!("^{pattern}$")).unwrap()
+    Regex::new(&format!("^{pattern}$"))
 }
 
 impl From<&str> for Language {
@@ -181,8 +212,15 @@ pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
             .expect("Time went backwards")
             .as_nanos()
     );
-    create_dir_all(foldername.clone()).unwrap();
-    PathBuf::from(foldername)
+    match create_dir_all(&foldername) {
+        Ok(()) => PathBuf::from(&foldername),
+        Err(e) => {
+            warn!(
+                "Failed to create temporary directory {foldername}: {e}. Falling back to system temp dir"
+            );
+            std::env::temp_dir()
+        }
+    }
 });
 
 pub static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(load_config);
@@ -213,7 +251,7 @@ impl Default for ConfigParams {
             entry: None,
             lang: Some("Guess".into()),
             args: Some(vec![]),
-            target: Some(env::current_dir().unwrap()),
+            target: Some(env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             input: Some(vec![]),
             output: Some(vec![]),
             points: Some(vec![]),
@@ -260,7 +298,7 @@ impl Default for Config {
             entry: String::new(),
             lang: Language::Guess,
             args: vec![],
-            target: env::current_dir().unwrap(),
+            target: env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             testcases: vec![],
             timeout: 10000,
             memory: 10,
@@ -296,6 +334,21 @@ impl Display for Config {
 ///
 /// This tester heavily utilizes the tokio runtime to efficiently await tasks.
 pub struct Args {
+    /// verbose mode
+    #[clap(short, long, global = true)]
+    pub verbose: bool,
+    /// debug mode
+    #[clap(long, global = true)]
+    pub debug: bool,
+    /// trace mode
+    #[clap(long, global = true)]
+    pub trace: bool,
+    /// quiet mode
+    #[clap(short, long, global = true)]
+    pub quiet: bool,
+    /// silent mode
+    #[clap(short, long, global = true)]
+    pub silent: bool,
     /// subcommands
     #[clap(subcommand)]
     pub command: Command,
@@ -314,34 +367,12 @@ pub enum CommandType {
 #[non_exhaustive]
 pub enum Command {
     /// initialize the tests
-    Init {
-        /// do not output any logs except for panic(fatal errors)
-        #[clap(short, long)]
-        silent: bool,
-        /// do not output any logs except for errors
-        #[clap(short, long)]
-        quiet: bool,
-    },
+    Init,
     /// run the tests
     Run {
         /// Test functionality
         #[clap(short, long)]
         test: Option<String>,
-        /// verbose mode
-        #[clap(short, long)]
-        verbose: bool,
-        /// debug mode
-        #[clap(long)]
-        debug: bool,
-        /// trace mode
-        #[clap(long)]
-        trace: bool,
-        /// quiet mode
-        #[clap(short, long)]
-        quiet: bool,
-        /// silent mode
-        #[clap(short, long)]
-        silent: bool,
         /// log level
         #[clap(short, long)]
         log_level: Option<u32>,
@@ -367,7 +398,7 @@ impl Args {
     pub const fn get_config(&self) -> Option<&PathBuf> {
         match &self.command {
             Command::Run { config, .. } => config.as_ref(),
-            Command::Init { .. } | Command::Test | Command::Format => None,
+            Command::Init | Command::Test | Command::Format => None,
         }
     }
 }
@@ -375,16 +406,16 @@ impl Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
+            verbose: false,
+            debug: false,
+            trace: false,
+            quiet: false,
+            silent: false,
             command: Command::Run {
                 test: None,
-                verbose: false,
-                debug: false,
-                trace: false,
-                quiet: false,
-                silent: false,
                 log_level: None,
                 config: None,
-                output: Some(PathBuf::from_str("config.toml").unwrap()),
+                output: Some(PathBuf::from("config.toml")),
                 dry_run: false,
                 artifacts: false,
             },
@@ -439,8 +470,8 @@ impl Default for SimpleOpts {
             silent: false,
             log_level: None,
             config: env::current_dir()
-                .unwrap()
-                .join(PathBuf::from_str("config.toml").unwrap()),
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(PathBuf::from("config.toml")),
             output: None,
             dry_run: true,
             artifacts: false,
@@ -458,19 +489,17 @@ impl From<Lazy<Args>> for SimpleOpts {
 impl From<Args> for SimpleOpts {
     fn from(value: Args) -> Self {
         let mut ret = Self::default();
+        ret.verbose = value.verbose;
+        ret.debug = value.debug;
+        ret.trace = value.trace;
+        ret.quiet = value.quiet;
+        ret.silent = value.silent;
         match value.command {
-            Command::Init { silent, quiet } => {
+            Command::Init => {
                 ret.mode = CommandType::Init;
-                ret.quiet = quiet;
-                ret.silent = silent;
             }
             Command::Run {
                 test,
-                verbose,
-                debug,
-                trace,
-                quiet,
-                silent,
                 log_level,
                 config,
                 output,
@@ -479,44 +508,58 @@ impl From<Args> for SimpleOpts {
             } => {
                 ret.mode = CommandType::Run;
                 ret.test = test;
-                ret.verbose = verbose;
-                ret.debug = debug;
-                ret.trace = trace;
-                ret.quiet = quiet;
-                ret.silent = silent;
                 ret.log_level = log_level;
                 ret.config = match config {
                     None => {
                         debug!("Probing for test toml.");
-                        let toml: Option<PathBuf> = None;
-                        for i in env::current_dir().unwrap().read_dir().unwrap() {
-                            let res = i.unwrap();
-                            if let Some(s) = res.path().extension()
-                                && s == "toml"
-                                && toml.is_some()
-                            {
-                                error!("apcs-tester found two tomls! Specify which one to use!");
-                                panic!("failed to determine what to use.");
-                            }
-                        }
-                        toml.map_or_else(
-                            || {
-                                error!(
-                                    "Since user did not give config, Probed for config in cd: {}",
-                                    env::current_dir().unwrap().to_str().unwrap()
-                                );
-                                error!("However, failed to find a toml file.");
-                                panic!("failed to find config.");
+                        let mut found: Option<PathBuf> = None;
+                        match env::current_dir() {
+                            Ok(current_dir) => match current_dir.read_dir() {
+                                Ok(entries) => {
+                                    for entry in entries {
+                                        match entry {
+                                            Ok(dir_entry) => {
+                                                let path = dir_entry.path();
+                                                if path.extension().and_then(|ext| ext.to_str())
+                                                    == Some("toml")
+                                                {
+                                                    if found.is_some() {
+                                                        error!(
+                                                            "Multiple TOML files found. Please specify which to use."
+                                                        );
+                                                        break;
+                                                    }
+                                                    found = Some(path);
+                                                }
+                                            }
+                                            Err(e) => warn!(
+                                                "Failed to inspect directory entry while probing config: {e}"
+                                            ),
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!(
+                                    "Failed to read current directory while probing config: {e}"
+                                ),
                             },
-                            |s| s,
-                        )
+                            Err(e) => warn!(
+                                "Failed to determine current directory while probing config: {e}"
+                            ),
+                        }
+                        found.unwrap_or_else(|| {
+                            warn!(
+                                "Did not detect a config file; continuing with default config.toml"
+                            );
+                            PathBuf::from("config.toml")
+                        })
                     }
                     Some(p) => {
-                        if !(p.is_file() || p.extension().unwrap().to_str().unwrap() == "toml") {
-                            error!(
-                                "Unrecognized file format or illegal path: {}",
-                                p.to_str().unwrap()
-                            );
+                        let is_toml = p
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map_or(false, |ext| ext.eq_ignore_ascii_case("toml"));
+                        if !p.is_file() || !is_toml {
+                            error!("Unrecognized file format or illegal path: {:?}", p);
                         }
                         p
                     }
@@ -546,68 +589,51 @@ pub static SIMPLEOPTS: std::sync::LazyLock<SimpleOpts> =
 pub static SIMPLEOPTS: Lazy<SimpleOpts> = Lazy::new(SimpleOpts::default);
 
 pub fn proc_args() {
-    match &ARGS.command {
-        Command::Init { silent, quiet } => {
-            if !*quiet && !*silent {
-                info!(
-                    "Initializing test in {}",
-                    env::current_dir().unwrap().to_str().unwrap()
-                );
+    let args = &*ARGS;
+    match &args.command {
+        Command::Init => {
+            if !args.quiet && !args.silent {
+                let cwd = env::current_dir()
+                    .ok()
+                    .and_then(|p| p.to_str().map(str::to_owned))
+                    .unwrap_or_else(|| "<unknown>".into());
+                info!("Initializing test in {cwd}");
             }
         }
-        Command::Run {
-            test,
-            verbose,
-            debug,
-            trace,
-            output,
-            ..
-        } => {
+        Command::Run { test, output, .. } => {
             if test.is_some() {
                 debug!("Test mode is enabled. Ignoring rest of arguments.");
             }
-            if *verbose {
+            if args.verbose {
                 debug!("Verbose mode enabled");
             }
-            if *debug {
+            if args.debug {
                 debug!("Debug mode enabled");
             }
-            if *trace {
+            if args.trace {
                 trace!("Trace mode enabled");
             }
 
-            if output.is_none() {
-                debug!("No output file or directory specified. falling back to stdout.");
-            } else {
-                let tmp = output.clone().unwrap();
+            if let Some(tmp) = output.clone() {
                 if tmp.is_dir() {
                     unimplemented!("Output is a directory! Not supported yet.");
                 } else {
                     debug!("Output file: {}", tmp.display());
-                    match tmp
-                        .extension()
-                        .expect("Expected file format!")
-                        .to_str()
-                        .unwrap()
-                    {
-                        "json" => {
-                            debug!("Output format: JSON");
+                    match tmp.extension().and_then(|ext| ext.to_str()) {
+                        Some("json") => debug!("Output format: JSON"),
+                        Some("txt") => debug!("Output format: Plaintext"),
+                        Some(ext) => {
+                            error!("Unsupported output format: {ext}");
+                            info!("falling back to stdout.");
                         }
-                        "txt" => {
-                            debug!("Output format: Plaintext");
-                        }
-                        _ => {
-                            error!(
-                                "Unsupported output format: {}",
-                                tmp.extension()
-                                    .expect("Expected file format!")
-                                    .to_str()
-                                    .unwrap()
-                            );
+                        None => {
+                            error!("Unsupported output format: <none>");
                             info!("falling back to stdout.");
                         }
                     }
                 }
+            } else {
+                debug!("No output file or directory specified. falling back to stdout.");
             }
         }
         Command::Test | Command::Format => {}

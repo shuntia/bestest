@@ -31,65 +31,82 @@ pub struct JavaRunner {
 impl Runner for JavaRunner {
     async fn add_dep(&mut self, p: PathBuf) -> Result<(), String> {
         self.deps.push(p.clone());
-        let target = self
+        let venv = self
             .venv
             .clone()
-            .unwrap()
-            .join(PathBuf::from(p.file_name().unwrap()));
+            .ok_or_else(|| "Virtual environment is not initialized".to_string())?;
+        let file_name = p
+            .file_name()
+            .ok_or_else(|| "Dependency path missing file name".to_string())?;
+        let target = venv.join(file_name);
         copy(p, target).await.map_err(|e| format!("{e}"))?;
         Ok(())
     }
     async fn add_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String> {
         self.deps.extend(p.clone());
-        let venvdir = self.venv.clone();
-        create_dir_all(venvdir.clone().unwrap()).map_err(|e| format!("{e}"))?;
+        let venvdir = self
+            .venv
+            .clone()
+            .ok_or_else(|| "Virtual environment is not initialized".to_string())?;
+        create_dir_all(&venvdir).map_err(|e| format!("{e}"))?;
         for i in p {
-            let target = venvdir
-                .clone()
-                .unwrap()
-                .join(PathBuf::from(i.file_name().unwrap()));
+            let file_name = i
+                .file_name()
+                .ok_or_else(|| "Dependency path missing file name".to_string())?;
+            let target = venvdir.join(file_name);
             copy(i, target).await.map_err(|e| format!("{e}"))?;
         }
         Ok(())
     }
     async fn prepare(&mut self) -> Result<(), RunError> {
-        if self.entry.extension().unwrap().to_str().unwrap() == "jar" {
-            debug!(
-                "Skipping compile for jar file {}",
-                self.entry.to_str().unwrap()
-            );
+        let entry_ext = self
+            .entry
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .ok_or_else(|| RunError::CE(None, "Unsupported entry extension".into()))?;
+        if entry_ext == "jar" {
+            debug!("Skipping compile for jar file {}", self.entry.display());
             warn!("If this file only contains .java files, this may greatly decrease efficiency.");
             Ok(())
         } else {
+            let venv = self
+                .venv
+                .as_ref()
+                .ok_or_else(|| RunError::CE(None, "Virtual environment not prepared".into()))?;
             let mut compiler = Command::new("javac")
-                .current_dir(self.venv.clone().unwrap())
-                .arg(self.entry.to_str().unwrap())
+                .current_dir(venv)
+                .arg(&self.entry)
                 .stderr(Stdio::piped())
                 .spawn()
-                .unwrap();
+                .map_err(|e| RunError::CE(None, e.to_string()))?;
             match compiler.wait().await {
-                Ok(s) => {
-                    if s.code().unwrap() == 0 {
-                        Ok(())
-                    } else {
+                Ok(s) => match s.code() {
+                    Some(0) => Ok(()),
+                    Some(code) => {
                         let mut r = String::new();
-                        let _ = compiler.stderr.unwrap().read_to_string(&mut r).await;
-                        Err(RunError::CE(Some(s.code().unwrap()), r))
+                        if let Some(stderr) = compiler.stderr.as_mut() {
+                            let _ = stderr.read_to_string(&mut r).await;
+                        }
+                        Err(RunError::CE(Some(code), r))
                     }
-                }
+                    None => Err(RunError::CE(
+                        None,
+                        "javac terminated without exit code".into(),
+                    )),
+                },
                 Err(e) => Err(RunError::CE(None, e.to_string())),
             }
         }
     }
     async fn stdin(&mut self, input: String) -> Result<(), String> {
         match &mut self.process {
-            Some(s) => s
-                .stdin
-                .as_mut()
-                .unwrap()
-                .write_all(input.as_bytes())
-                .await
-                .map_err(|e| format!("{e}")),
+            Some(s) => match s.stdin.as_mut() {
+                Some(stdin) => stdin
+                    .write_all(input.as_bytes())
+                    .await
+                    .map_err(|e| format!("{e}")),
+                None => Err("Process stdin is not available".into()),
+            },
             None => Err("Process has not started yet!".into()),
         }
     }
@@ -104,7 +121,11 @@ impl Runner for JavaRunner {
     }
     async fn exitcode(&mut self) -> Result<Option<ExitStatus>, std::io::Error> {
         if self.running().await {
-            self.process.as_mut().unwrap().try_wait()
+            if let Some(process) = self.process.as_mut() {
+                process.try_wait()
+            } else {
+                Ok(None)
+            }
         } else {
             Ok(None)
         }
@@ -123,8 +144,11 @@ impl Runner for JavaRunner {
     }
     async fn new_from_venv(venv: PathBuf, entry: PathBuf) -> Result<Self, Error> {
         let mut ret;
-        let ext: String = entry.extension().unwrap().to_string_lossy().into();
-        match ext.as_str() {
+        let ext = entry
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .ok_or_else(|| Error::new("Unsupported Java artifact"))?;
+        match ext {
             "java" => {
                 debug!("detected bare java file.");
                 ret = Self {
@@ -138,8 +162,12 @@ impl Runner for JavaRunner {
                 };
                 ret.command
                     .arg("-cp")
-                    .arg(venv.to_str().unwrap())
-                    .arg(entry.file_stem().unwrap())
+                    .arg(&venv)
+                    .arg(
+                        entry
+                            .file_stem()
+                            .ok_or_else(|| Error::new("Entry missing file stem"))?,
+                    )
                     .stdin(Stdio::piped())
                     .stderr(Stdio::piped())
                     .stdout(Stdio::piped());
@@ -161,14 +189,29 @@ impl Runner for JavaRunner {
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped());
             }
-            _ => panic!("give me a java file."),
+            _ => {
+                return Err(Error::new("Unsupported Java artifact"));
+            }
         }
         Ok(ret)
     }
     async fn run(&mut self) -> Result<(), RunError> {
+        let venv = self
+            .venv
+            .as_ref()
+            .ok_or_else(|| RunError::CE(None, "Virtual environment not prepared".into()))?;
         let mut contains = false;
-        for i in self.venv.as_ref().unwrap().read_dir().unwrap() {
-            if i.unwrap().path().extension().unwrap().to_str().unwrap() == "class" {
+        let entries = venv
+            .read_dir()
+            .map_err(|e| RunError::CE(None, e.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| RunError::CE(None, e.to_string()))?;
+            let is_class = entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("class"));
+            if is_class {
                 contains = true;
                 break;
             }
@@ -177,18 +220,28 @@ impl Runner for JavaRunner {
             debug!("Hasn't been compiled and prepared yet! Compiling...");
             self.prepare().await?;
         }
-        self.process = Some(self.command.spawn().unwrap());
+        let child = self
+            .command
+            .spawn()
+            .map_err(|e| RunError::RE(None, e.to_string()))?;
+        self.process = Some(child);
         self.start = Some(Instant::now());
         Ok(())
     }
     async fn running(&mut self) -> bool {
         match &mut self.process {
-            Some(s) => match s.try_wait().unwrap() {
-                Some(s) => {
-                    let _ = self.exitcode.set(s.code().unwrap());
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => {
+                    if let Some(code) = status.code() {
+                        let _ = self.exitcode.set(code);
+                    }
                     false
                 }
-                None => true,
+                Ok(None) => true,
+                Err(e) => {
+                    warn!("Failed to poll java process: {e}");
+                    false
+                }
             },
             None => false,
         }
@@ -200,7 +253,8 @@ impl Runner for JavaRunner {
     async fn signal(&mut self, s: Signal) -> Result<(), String> {
         #[cfg(unix)]
         let pid = nix::unistd::Pid::from_raw(if let Some(c) = &self.process {
-            c.id().unwrap() as i32
+            c.id()
+                .ok_or_else(|| "Process id is unavailable".to_string())? as i32
         } else {
             log::error!("tried to kill PID that does not exist!");
             return Err("tried to kill PID that does not exist".into());
@@ -216,6 +270,13 @@ impl Runner for JavaRunner {
         self.start.as_ref().map_or(Err(()), |s| Ok(s.elapsed()))
     }
     async fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.process.as_mut().unwrap().wait().await
+        if let Some(process) = self.process.as_mut() {
+            process.wait().await
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "process is not running",
+            ))
+        }
     }
 }
