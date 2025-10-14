@@ -24,8 +24,6 @@ use anyhow::Result;
 use checker::{IllegalExpr, check_dirs};
 use config::{CONFIG, CommandType, ConfigParams, SIMPLEOPTS, TEMPDIR, proc_args};
 
-use crate::config::ARGS;
-
 #[expect(clippy::unwrap_used)]
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,8 +53,6 @@ async fn main() -> Result<()> {
         tokio::task::spawn_blocking(gui::init);
         gui::app::wait_for_config();
     }
-    info!("{:?}", ARGS);
-    info!("{args:?}");
     match args.mode {
         CommandType::Init => {
             info!("creating bare config file...");

@@ -251,7 +251,6 @@ pub async fn test_proc(
 ) -> TestResult {
     let timeout = config::get_config().unwrap().timeout;
     proc.run().await.unwrap();
-    let _ = proc.read_all().await;
     proc.stdin(testcase.input.clone())
         .await
         .unwrap_or_else(|e| {
@@ -261,23 +260,25 @@ pub async fn test_proc(
             );
             error!("Reason: {e}")
         });
-    while proc.running().await {
-        if proc.runtime().await.unwrap() > Duration::from_millis(timeout) {
-            info!(
-                "{} has been running for too long. Killing process...",
-                path.file_name().unwrap().to_str().unwrap()
-            );
-            #[cfg(unix)]
-            if let Err(e) = proc.signal(nix::sys::signal::Signal::SIGKILL).await {
-                error!("failed to kill process: {e}")
-            }
-            while !proc.running().await {}
-            return TestResult::Error {
-                code: 9,
-                reason: "Timed out.".into(),
-            };
+    if tokio::time::timeout(Duration::from_millis(timeout), proc.wait())
+        .await
+        .is_err()
+    {
+        info!(
+            "{} has been running for too long. Killing process...",
+            path.file_name().unwrap().to_str().unwrap()
+        );
+        #[cfg(unix)]
+        if let Err(e) = proc.signal(nix::sys::signal::Signal::SIGKILL).await {
+            error!("failed to kill process: {e}")
         }
+        while !proc.running().await {}
+        return TestResult::Error {
+            code: 9,
+            reason: "Timed out.".into(),
+        };
     }
+
     let out = proc.read_all().await.unwrap();
     let input = InternedInput::new(testcase.expected.as_str(), out.as_str());
     let diff = imara_diff::Diff::compute(Algorithm::Histogram, &input);

@@ -10,8 +10,8 @@ use std::{
     process::ExitStatus,
     time,
 };
-use tokio::fs::copy;
 use tokio::process::ChildStdout;
+use tokio::{fs::copy, io};
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -110,4 +110,5 @@ pub trait Runner: Send + Sync {
     async fn exitcode(&mut self) -> Result<Option<ExitStatus>, std::io::Error>;
     async fn add_dep(&mut self, p: PathBuf) -> Result<(), String>;
     async fn add_deps(&mut self, p: Vec<PathBuf>) -> Result<(), String>;
+    async fn wait(&mut self) -> io::Result<ExitStatus>;
 }

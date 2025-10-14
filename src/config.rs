@@ -290,6 +290,11 @@ impl Display for Config {
 
 #[derive(Debug, Parser, Clone)]
 #[non_exhaustive]
+/// Bestest is the Bestest, efficient, speedy tester.
+///
+/// Refer to https://github.com/shuntia/bestest for how to configure config.toml.
+///
+/// This tester heavily utilizes the tokio runtime to efficiently await tasks.
 pub struct Args {
     /// subcommands
     #[clap(subcommand)]
@@ -379,7 +384,7 @@ impl Default for Args {
                 silent: false,
                 log_level: None,
                 config: None,
-                output: Some(PathBuf::from_str("/tmp/output.toml").unwrap()),
+                output: Some(PathBuf::from_str("config.toml").unwrap()),
                 dry_run: false,
                 artifacts: false,
             },

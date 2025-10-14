@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     fs::copy,
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    io::{self, AsyncReadExt as _, AsyncWriteExt as _},
     process::{Child, ChildStdout, Command},
 };
 
@@ -52,7 +52,6 @@ impl Runner for JavaRunner {
         }
         Ok(())
     }
-
     async fn prepare(&mut self) -> Result<(), RunError> {
         if self.entry.extension().unwrap().to_str().unwrap() == "jar" {
             debug!(
@@ -215,5 +214,8 @@ impl Runner for JavaRunner {
     }
     async fn runtime(&self) -> Result<Duration, ()> {
         self.start.as_ref().map_or(Err(()), |s| Ok(s.elapsed()))
+    }
+    async fn wait(&mut self) -> io::Result<ExitStatus> {
+        self.process.as_mut().unwrap().wait().await
     }
 }
