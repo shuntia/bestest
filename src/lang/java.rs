@@ -210,7 +210,7 @@ impl Runner for JavaRunner {
                 .path()
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map_or(false, |ext| ext.eq_ignore_ascii_case("class"));
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("class"));
             if is_class {
                 contains = true;
                 break;
@@ -273,10 +273,7 @@ impl Runner for JavaRunner {
         if let Some(process) = self.process.as_mut() {
             process.wait().await
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "process is not running",
-            ))
+            Err(io::Error::other("process is not running"))
         }
     }
 }

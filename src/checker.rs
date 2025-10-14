@@ -234,6 +234,9 @@ pub mod static_check {
                 }
             });
         }
+        if allowed.contains(&Allow::All) {
+            return Ok(vec![]);
+        }
         let prohibited: Vec<Allow> = Allow::iter().filter(|el| !allowed.contains(el)).collect();
         let mut prohibited_str: Vec<(Allow, &str)> = Vec::new();
         for i in &prohibited {
@@ -514,7 +517,14 @@ pub mod static_check {
                             "runtimeexec",
                         ]
                     }
-                    Self::Threading => vec!["Thread", "Thread.start"],
+                    Self::Threading => vec![
+                        "Thread",
+                        "Thread.start",
+                        "new Thread",
+                        "ExecutorService",
+                        "Executors.new",
+                        "ThreadPoolExecutor",
+                    ],
                     Self::Reflection => {
                         vec![
                             "reflect",

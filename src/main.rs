@@ -154,6 +154,9 @@ async fn run() -> Result<()> {
         };
         points.push((file_name, acc));
     }
+    if SIMPLEOPTS.sort {
+        points.sort_by(|a, b| a.0.cmp(&b.0));
+    }
     if let Some(s) = SIMPLEOPTS.output.clone() {
         let mut file = File::create(s).await?;
         for i in points {

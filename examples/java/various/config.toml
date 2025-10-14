@@ -1,0 +1,32 @@
+# Java-focused sample showing a mix of successful, failing, and slow submissions.
+entry = "Main"
+lang = "Java"
+args = []
+target = "examples/java/various/submissions"
+timeout = 1200
+threads = 4
+checker = "Static"
+format = "{name}_{num}_{id}_{filename}.{extension}"
+orderby = "Id"
+dependencies = [
+  "examples/java/various/deps/MathHelper.java",
+  "examples/java/various/deps/constants.properties"
+]
+
+input = [
+  "2 3\n",            # Expected to pass and print 5
+  "9 0\n",            # Should surface a runtime error in user code
+  "simulate-timeout", # Exercise the timeout branch in the harness
+  "crash"             # Trigger an unhandled exception path
+]
+
+output = [
+  "5\n",
+  "[ERROR] division by zero\n",
+  "[TIMEOUT]\n",
+  "[EXCEPTION] Illegal Operation\n"
+]
+
+points = [5, 5, 5, 5]
+
+allow = ["All"]

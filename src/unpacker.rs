@@ -196,8 +196,8 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         }) {
             Some(s) => name = s,
             None => {
-                error!("format requires {{name}} or {{id}} so that apcs-tester knows what to do!");
-                error!("Capture failed for {p:?}");
+                error!("format requires {{name}} or {{id}} so that bestest knows what to do!");
+                error!("Failed to capture {:?} for {p:?}", CONFIG.orderby);
                 return Err(UnpackError::FileFormat);
             }
         }
@@ -241,6 +241,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         let target = TEMPDIR.clone().join(name.as_str());
         match create_dir(&target).await {
             Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => {
                 return Err(UnpackError::Os(e.raw_os_error().unwrap_or(-1)));
             }

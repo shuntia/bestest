@@ -10,7 +10,7 @@ use itertools::Itertools as _;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::env;
+use std::env::{self, temp_dir};
 #[cfg(not(feature = "gui"))]
 use std::fs::File;
 use std::fs::create_dir_all;
@@ -206,7 +206,8 @@ pub fn match_ext(s: &str) -> Language {
 
 pub static TEMPDIR: LazyLock<PathBuf> = LazyLock::new(|| {
     let foldername = format!(
-        "/tmp/apcs-tester-tmp-{}",
+        "{}/bestest-tmp-{}",
+        temp_dir().to_string_lossy(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -285,7 +286,7 @@ pub struct Config {
     pub dependencies: Vec<PathBuf>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[non_exhaustive]
 pub enum Orderby {
     Name,
@@ -388,6 +389,9 @@ pub enum Command {
         /// leave artifacts
         #[clap(long, short)]
         artifacts: bool,
+        /// sort results before printing
+        #[clap(long)]
+        sort: bool,
     },
     /// test features
     Test,
@@ -418,6 +422,7 @@ impl Default for Args {
                 output: Some(PathBuf::from("config.toml")),
                 dry_run: false,
                 artifacts: false,
+                sort: false,
             },
         }
     }
@@ -449,6 +454,8 @@ pub struct SimpleOpts {
     pub dry_run: bool,
     /// leave artifacts
     pub artifacts: bool,
+    /// sort results before printing
+    pub sort: bool,
 }
 impl SimpleOpts {
     #[must_use]
@@ -475,6 +482,7 @@ impl Default for SimpleOpts {
             output: None,
             dry_run: true,
             artifacts: false,
+            sort: false,
         }
     }
 }
@@ -488,12 +496,14 @@ impl From<Lazy<Args>> for SimpleOpts {
 
 impl From<Args> for SimpleOpts {
     fn from(value: Args) -> Self {
-        let mut ret = Self::default();
-        ret.verbose = value.verbose;
-        ret.debug = value.debug;
-        ret.trace = value.trace;
-        ret.quiet = value.quiet;
-        ret.silent = value.silent;
+        let mut ret = Self {
+            verbose: value.verbose,
+            debug: value.debug,
+            trace: value.trace,
+            quiet: value.quiet,
+            silent: value.silent,
+            ..Self::default()
+        };
         match value.command {
             Command::Init => {
                 ret.mode = CommandType::Init;
@@ -505,6 +515,7 @@ impl From<Args> for SimpleOpts {
                 output,
                 dry_run,
                 artifacts,
+                sort,
             } => {
                 ret.mode = CommandType::Run;
                 ret.test = test;
@@ -557,7 +568,7 @@ impl From<Args> for SimpleOpts {
                         let is_toml = p
                             .extension()
                             .and_then(|ext| ext.to_str())
-                            .map_or(false, |ext| ext.eq_ignore_ascii_case("toml"));
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
                         if !p.is_file() || !is_toml {
                             error!("Unrecognized file format or illegal path: {:?}", p);
                         }
@@ -567,6 +578,7 @@ impl From<Args> for SimpleOpts {
                 ret.output = output;
                 ret.dry_run = dry_run;
                 ret.artifacts = artifacts;
+                ret.sort = sort;
             }
             Command::Test => {
                 ret.mode = CommandType::Test;
@@ -651,7 +663,10 @@ pub static KNOWN_EXTENSIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .into()
 });
 
-// Spinner only properly displays if you have nerd fonts installed.
+#[cfg(feature = "nerdfont")]
 pub const SPINNER: [&str; 6] = [
     "\u{ee06}", "\u{ee07}", "\u{ee08}", "\u{ee08}", "\u{ee0a}", "\u{ee0b}",
 ];
+
+#[cfg(not(feature = "nerdfont"))]
+pub const SPINNER: [&str; 6] = ["-", "\\", "|", "/", "-", "\\"];
