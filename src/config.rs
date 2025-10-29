@@ -116,11 +116,11 @@ fn load_config() -> Config {
                     points: *c,
                 },
                 Left((a, b)) => {
-                    debug!("Found test case without any points! Falling back to zero points.");
+                    debug!("Found test case without any points! Falling back to one point.");
                     TestCase {
                         input: a.to_string(),
                         expected: b.to_string(),
-                        points: 0,
+                        points: 1,
                     }
                 }
                 Right(c) => {
