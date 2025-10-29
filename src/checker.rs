@@ -1,5 +1,5 @@
 use indicatif::{MultiProgress, ProgressBar};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
@@ -53,6 +53,7 @@ pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<Ille
     let op = Arc::new(tokio::sync::Mutex::new(
         mp.add(ProgressBar::new(entries.len() as u64)),
     ));
+    let total_entries = entries.len();
     let mut handles = vec![];
 
     for entry in entries {
@@ -80,6 +81,11 @@ pub async fn check_dirs(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, Vec<Ille
     }
     mp.clear()?;
     let ret = core::mem::take(&mut *results.lock().await);
+    let flagged = ret.iter().filter(|(_, issues)| !issues.is_empty()).count();
+    info!(
+        "Static analysis complete: {} file(s) flagged out of {} inspected.",
+        flagged, total_entries
+    );
     Ok(ret)
 }
 
@@ -178,7 +184,7 @@ async fn changefile(
         dir.clone(),
         match check_file(dir.clone()) {
             Err(e) => {
-                error!("ERROR");
+                error!("Failed to check {}: {e}", dir.display());
                 errs.lock().await.push((dir.clone(), e.to_string()));
                 return Ok(());
             }
@@ -229,7 +235,7 @@ pub mod static_check {
             allowed.insert(match Allow::from_str(i.as_str()).first() {
                 Some(s) => s.clone(),
                 None => {
-                    warn!("potentially illegal config!");
+                    warn!("Ignoring unknown allowlist entry `{}` in configuration.", i);
                     continue;
                 }
             });

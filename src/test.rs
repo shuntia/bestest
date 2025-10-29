@@ -33,9 +33,19 @@ impl core::fmt::Display for TestCase {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum TestResult {
-    Correct { case: &'static TestCase },
-    Error { reason: String, code: i32 },
-    Wrong { case: &'static TestCase, loc: Diff },
+    Correct {
+        case: &'static TestCase,
+        output: String,
+    },
+    Error {
+        reason: String,
+        code: i32,
+    },
+    Wrong {
+        case: &'static TestCase,
+        output: String,
+        diff: Diff,
+    },
 }
 
 impl TestResult {
@@ -121,7 +131,18 @@ pub async fn test_dirs<T: IntoIterator<Item = PathBuf>>(
         }
     }
     pass.lock().await.finish_and_clear();
-    info!("All tests complete.");
+    let total_cases: usize = ret.iter().map(|(_, results)| results.len()).sum();
+    let passed_cases: usize = ret
+        .iter()
+        .map(|(_, results)| results.iter().filter(|case| case.is_correct()).count())
+        .sum();
+    let submissions_with_issues = ret
+        .iter()
+        .filter(|(_, results)| results.iter().any(|case| !case.is_correct()))
+        .count();
+    info!(
+        "All tests complete: {passed_cases}/{total_cases} case(s) passed; {submissions_with_issues} submission(s) with failures."
+    );
     Ok(ret)
 }
 
@@ -177,7 +198,17 @@ pub async fn test_file_progress(
     progress.set_style(spinner_style);
     let mut proc = match runner::from_dir(path.clone(), Some(Language::Java)).await {
         Some(s) => s,
-        None => return (path, Err(RunError::CE(None, "Unknown".into()))),
+        None => {
+            progress.finish_and_clear();
+            error!(
+                "Failed to initialize runner for {}. Skipping.",
+                path.display()
+            );
+            return (
+                path,
+                Err(RunError::CE(None, "Runner initialization failed".into())),
+            );
+        }
     };
     let Some(filenamestr) = path
         .file_name()
@@ -189,7 +220,7 @@ pub async fn test_file_progress(
     progress.set_message(filenamestr.clone());
     progress.enable_steady_tick(Duration::from_millis(100));
     if let Err(e) = proc.prepare().await {
-        info!(
+        warn!(
             "{} {} Compile failed!",
             style("[CE]").bold().yellow(),
             path.display()
@@ -315,11 +346,15 @@ pub async fn test_proc(
     let input = InternedInput::new(testcase.expected.as_str(), out.as_str());
     let diff = imara_diff::Diff::compute(Algorithm::Histogram, &input);
     if diff.count_additions() + diff.count_removals() == 0 {
-        TestResult::Correct { case: testcase }
+        TestResult::Correct {
+            case: testcase,
+            output: out,
+        }
     } else {
         TestResult::Wrong {
             case: testcase,
-            loc: diff,
+            output: out,
+            diff,
         }
     }
 }

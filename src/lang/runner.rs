@@ -39,12 +39,17 @@ pub async fn from_dir(p: PathBuf, lang: Option<Language>) -> Option<Box<dyn Runn
         error!("Language other than java not yet implemented!");
         return None;
     }
-    for i in &CONFIG.dependencies {
-        if copy(i, p.clone().join(i.file_name().unwrap()))
-            .await
-            .is_err()
-        {
-            error!("Failed to copy dependency: {i:?}");
+    for dep in &CONFIG.dependencies {
+        let Some(file_name) = dep.file_name() else {
+            warn!(
+                "Dependency {} does not have a valid filename; skipping.",
+                dep.display()
+            );
+            continue;
+        };
+        let target = p.clone().join(file_name);
+        if let Err(err) = copy(dep, target).await {
+            error!("Failed to copy dependency {}: {err}", dep.display());
         }
     }
     let entry = match find_in_dir(&p, &CONFIG.entry)

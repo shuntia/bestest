@@ -18,11 +18,16 @@ pub mod executable;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod lang;
+mod report;
 pub mod test;
 pub mod unpacker;
 use anyhow::{Context, Result};
 use checker::{IllegalExpr, check_dirs};
 use config::{CONFIG, CommandType, ConfigParams, SIMPLEOPTS, TEMPDIR, proc_args};
+use report::{
+    RunReport, TotalsSummary, UnpackSummary, detect_output_format, serialize_report,
+    summarize_security, summarize_submissions,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -80,22 +85,34 @@ async fn run() -> Result<()> {
         error!("Failed to unpack files. Are you sure the Regex and file format is correct?");
         return Ok(());
     }
-    info!("Starting safety checks...");
-    debug!(
-        "checking: {:?}",
-        target
-            .iter()
-            .cloned()
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
+    let mut unpacked = Vec::new();
+    let mut ignored = 0usize;
+    let mut failed = 0usize;
+    for entry in &target {
+        match entry {
+            Ok(path) => unpacked.push(path.clone()),
+            Err(unpacker::UnpackError::Ignore) => ignored += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    info!(
+        "Unpacking finished: {} prepared, {} skipped, {} failed.",
+        unpacked.len(),
+        ignored,
+        failed
     );
-    let check_result: HashMap<PathBuf, Vec<IllegalExpr>> =
-        check_dirs(target.iter().cloned().filter_map(Result::ok).collect())
-            .await?
-            .iter()
-            .filter(|el| !el.1.is_empty())
-            .map(|el| (el.0.clone(), el.1.clone()))
-            .collect();
+    if unpacked.is_empty() {
+        error!("No submissions were ready after unpacking. Aborting run.");
+        return Ok(());
+    }
+    info!("Starting safety checks...");
+    debug!("checking: {:?}", unpacked);
+    let check_result: HashMap<PathBuf, Vec<IllegalExpr>> = check_dirs(unpacked.clone())
+        .await?
+        .iter()
+        .filter(|el| !el.1.is_empty())
+        .map(|el| (el.0.clone(), el.1.clone()))
+        .collect();
     if check_result.is_empty() {
         info!("{} All safety checks passed.", style("[AC]").green().bold());
     } else {
@@ -108,6 +125,8 @@ async fn run() -> Result<()> {
             "NOTE: if you want to allow potentially dangerous operations, configure it in config.toml."
         );
     }
+    let security_summary = summarize_security(&check_result);
+    let flagged_paths: Vec<PathBuf> = check_result.keys().cloned().collect();
     // get the executables and remove dangerous files.
     let mut exec: HashSet<PathBuf> = HashSet::new();
     for entry in TEMPDIR
@@ -117,8 +136,8 @@ async fn run() -> Result<()> {
         let dir_entry = entry.context("failed to iterate temporary directory entry")?;
         exec.insert(dir_entry.path());
     }
-    for i in check_result {
-        let mut rem = i.0;
+    for path in flagged_paths {
+        let mut rem = path.clone();
         while let Some(parent) = rem.parent() {
             if parent == TEMPDIR.as_path() {
                 break;
@@ -127,6 +146,7 @@ async fn run() -> Result<()> {
         }
         exec.remove(&rem);
     }
+    let total_points_available: u64 = config.testcases.iter().map(|tc| tc.points).sum();
     info!("Starting tests...");
     debug!("Target dirs: {exec:?}");
     if exec.is_empty() {
@@ -135,39 +155,62 @@ async fn run() -> Result<()> {
     }
     let res = test::test_dirs(exec).await?;
     debug!("Results: {res:#?}");
-    let mut points = vec![];
-    for i in res {
-        let mut acc = 0;
-        for j in 0..i.1.len() {
-            #[expect(clippy::indexing_slicing)]
-            if i.1[j].is_correct() {
-                acc += config.testcases[j].points;
+    let (mut submission_reports, mut scoreboard, test_totals) =
+        summarize_submissions(res, config, total_points_available);
+    if SIMPLEOPTS.sort {
+        submission_reports.sort_by(|a, b| a.name.cmp(&b.name));
+        scoreboard.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+    let totals_summary = TotalsSummary {
+        submissions: submission_reports.len(),
+        submissions_with_issues: test_totals.submissions_with_issues,
+        perfect_scores: test_totals.perfect_scores,
+        max_points_per_submission: total_points_available,
+        cases_total: test_totals.total_cases,
+        cases_passed: test_totals.passed_cases,
+    };
+    let run_report = RunReport {
+        unpack: UnpackSummary {
+            prepared: unpacked.len(),
+            skipped: ignored,
+            failed,
+        },
+        totals: totals_summary,
+        security: security_summary,
+        submissions: submission_reports,
+    };
+    info!(
+        "Scoring complete for {} submission(s); max points per submission: {}.",
+        run_report.totals.submissions, run_report.totals.max_points_per_submission
+    );
+    if run_report.totals.perfect_scores > 0 {
+        info!(
+            "{} submission(s) achieved full marks.",
+            run_report.totals.perfect_scores
+        );
+    }
+    if let Some(path) = SIMPLEOPTS.output.clone() {
+        let (format, recognized) = detect_output_format(&path);
+        if !recognized {
+            if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                warn!("Unsupported output extension `{ext}`; defaulting to plaintext.");
+            } else {
+                warn!("Output path missing extension; defaulting to plaintext.");
             }
         }
-        let Some(file_name) =
-            i.0.file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        else {
-            warn!("Skipping entry with invalid filename: {:?}", i.0);
-            continue;
-        };
-        points.push((file_name, acc));
-    }
-    if SIMPLEOPTS.sort {
-        points.sort_by(|a, b| a.0.cmp(&b.0));
-    }
-    if let Some(s) = SIMPLEOPTS.output.clone() {
-        let mut file = File::create(s).await?;
-        for i in points {
-            file.write_all(format!("{}: {}\n", i.0, i.1).as_bytes())
-                .await
-                .context("failed to write to result file")?;
-        }
+        let mut file = File::create(&path)
+            .await
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        let payload =
+            serialize_report(&run_report, format).context("failed to serialize results")?;
+        file.write_all(&payload)
+            .await
+            .context("failed to write results")?;
+        info!("Results written to {}", path.display());
     } else {
         #[expect(clippy::print_stdout)]
-        for i in points {
-            println!("{}: {}", i.0, i.1);
+        for (name, score) in &scoreboard {
+            println!("{name}: {score}");
         }
     }
     #[cfg(not(feature = "gui"))]

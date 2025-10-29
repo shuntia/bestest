@@ -2,7 +2,7 @@ use crate::config::Orderby;
 use crate::config::{CONFIG, KNOWN_EXTENSIONS, MULTIPROG, TEMPDIR, generate_regex};
 use core::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use std::fs::{self, File};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -62,7 +62,10 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
     let semaphore = Arc::new(Semaphore::new(max_threads));
     let mut handles = vec![];
     if p.is_file() {
-        error!("Expected path, instead got file! Unpacking single file anyway...");
+        warn!(
+            "Expected a directory to unpack, received a file instead ({}). Treating it as a single submission.",
+            p.display()
+        );
         return vec![unpack(p).await];
     }
     debug!("unpacking...");
@@ -116,7 +119,7 @@ pub async fn unpack_dir(p: PathBuf) -> Vec<Result<PathBuf, UnpackError>> {
                             .file_name()
                             .and_then(|s| s.to_str())
                             .unwrap_or("<unknown>");
-                        debug!("Successfully unpacked {name}");
+                        debug!("Finished unpacking {}", name);
                     }
                     Err(e) => match e {
                         UnpackError::Ignore => {}
@@ -164,7 +167,10 @@ async fn unpack_semaphore(p: PathBuf, s: Arc<Semaphore>) -> Result<PathBuf, Unpa
 
 pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
     if p.is_dir() {
-        warn!("Unpacker does not know what to do with unpacked directory! Leaving it untouched!");
+        warn!(
+            "Unpacker received directory {}; leaving it untouched.",
+            p.display()
+        );
         return Err(UnpackError::Ignore);
     }
     if p.is_file()
@@ -174,7 +180,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
             .map(|ext| KNOWN_EXTENSIONS.contains(ext))
             .unwrap_or(false)
     {
-        debug!("Ignoring unknown file.");
+        debug!("Skipping file with unsupported extension: {}", p.display());
         return Err(UnpackError::Ignore);
     }
     let regex = match generate_regex(&CONFIG.format) {
@@ -185,7 +191,7 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         }
     };
     let Some(file_name) = p.file_name().and_then(|name| name.to_str()) else {
-        debug!("Unable to read filename for {:?}; skipping", p);
+        debug!("Unable to read filename for {}; skipping", p.display());
         return Err(UnpackError::Ignore);
     };
     let name;
@@ -206,7 +212,10 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         } else if let Some(ext_str) = p.extension().and_then(|ext| ext.to_str()) {
             ext_str.to_owned()
         } else {
-            warn!("Failed to get extension!");
+            warn!(
+                "Failed to determine file extension for {}; attempting fallback behaviour.",
+                p.display()
+            );
             #[cfg(target_os = "windows")]
             {
                 error!(
@@ -276,7 +285,11 @@ pub async fn unpack(p: PathBuf) -> Result<PathBuf, UnpackError> {
         }
         return Ok(target);
     }
-    debug!("Regex capture failed! Skipping file.");
+    trace!(
+        "Skipping file {} because it did not match configured format {}",
+        p.display(),
+        CONFIG.format
+    );
     Err(UnpackError::Ignore)
 }
 

@@ -460,7 +460,7 @@ pub struct SimpleOpts {
 impl SimpleOpts {
     #[must_use]
     pub fn new() -> Self {
-        debug!("converting ARGS into SimpleOpts: {ARGS:?}");
+        trace!("converting ARGS into SimpleOpts: {ARGS:?}");
         (*ARGS).clone().into()
     }
 }
